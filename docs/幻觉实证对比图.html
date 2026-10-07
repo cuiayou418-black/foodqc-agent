@@ -1,0 +1,136 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>幻觉实证对比图 · 食用油酸价国标限值</title>
+<style>
+  :root{
+    --bg:#f5f7fa; --card:#ffffff; --ink:#1f2933; --sub:#52606d;
+    --line:#e4e7eb; --red:#d64545; --red-bg:#fdecec; --green:#2f855a; --green-bg:#e6f4ea;
+    --brand:#1f6feb; --brand-bg:#e8f0fe; --warn:#b7791f; --warn-bg:#fdf3e2;
+  }
+  *{box-sizing:border-box;font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif}
+  body{margin:0;background:var(--bg);color:var(--ink);padding:32px 24px;line-height:1.6}
+  .wrap{max-width:980px;margin:0 auto}
+  h1{font-size:22px;margin:0 0 4px}
+  .meta{color:var(--sub);font-size:13px;margin-bottom:20px}
+  .grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:18px 20px;box-shadow:0 1px 3px rgba(0,0,0,.04)}
+  .card h2{font-size:15px;margin:0 0 12px;display:flex;align-items:center;gap:8px}
+  .tag{font-size:11px;font-weight:700;padding:2px 8px;border-radius:999px}
+  .tag.bad{background:var(--red-bg);color:var(--red)}
+  .tag.good{background:var(--green-bg);color:var(--green)}
+  .chat{background:#f7f8fa;border:1px solid var(--line);border-radius:8px;padding:12px 14px;font-size:13.5px;margin-bottom:10px}
+  .chat .q{color:var(--brand);font-weight:600;margin-bottom:8px}
+  .chat .a{color:var(--ink)}
+  .wrong{color:var(--red);font-weight:800;background:var(--red-bg);padding:0 5px;border-radius:4px}
+  table{border-collapse:collapse;width:100%;font-size:13.5px}
+  th,td{border:1px solid var(--line);padding:8px 10px;text-align:center}
+  th{background:#f0f3f7;font-weight:600}
+  .hl{background:var(--green-bg);color:var(--green);font-weight:800}
+  .insight{margin-top:20px;background:var(--brand-bg);border-left:4px solid var(--brand);border-radius:8px;padding:14px 18px;font-size:14px}
+  .insight .k{color:var(--brand);font-weight:800}
+  .insight code{background:#fff;border:1px solid #cdd9ee;border-radius:4px;padding:1px 6px;font-size:12.5px}
+  .verdict{margin-top:14px;background:var(--warn-bg);border-left:4px solid var(--warn);border-radius:8px;padding:14px 18px;font-size:14px}
+  .verdict b{color:var(--warn)}
+  .src{margin-top:12px;color:var(--sub);font-size:12px}
+  .foot{text-align:center;color:var(--sub);font-size:12px;margin-top:18px}
+  .evo{display:grid;grid-template-columns:repeat(2,1fr);gap:14px;margin-top:12px}
+  .tag.info{background:var(--brand-bg);color:var(--brand)}
+  .evo .card{padding:14px 16px}
+  .evo h3{font-size:13.5px;margin:0 0 4px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .evo .sub{font-size:11.5px;color:var(--sub);margin-bottom:10px}
+  .evo .code{background:#f7f8fa;border:1px solid var(--line);border-radius:6px;padding:9px 10px;font-family:ui-monospace,Consolas,monospace;font-size:11.5px;line-height:1.55;word-break:break-all;color:var(--ink)}
+  .evo .body{font-size:13px;margin-top:9px;color:var(--ink)}
+  .evo .bad2{color:var(--red);font-weight:800}
+  .evo .good2{color:var(--green);font-weight:800}
+  .evo .note{font-size:12px;color:var(--warn);margin-top:9px;background:var(--warn-bg);border-radius:6px;padding:7px 9px;line-height:1.5}
+  @media(max-width:760px){.evo{grid-template-columns:1fr}.grid{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>幻觉实证对比图：食用油酸价国标限值</h1>
+  <div class="meta">Figure 1 · 大模型回答 vs 国家标准原文（FoodQC-Agent 毕设"问题背景 + 方案演进"章节素材）｜ 实测日期 2026-10-04 ~ 10-06</div>
+
+  <div class="grid">
+    <!-- 左：模型错误回答 -->
+    <div class="card">
+      <h2>大模型回答 <span class="tag bad">实测 · 错误</span></h2>
+      <div class="chat">
+        <div class="q">问：一级大豆油的酸价国标限值是多少？超标可能有哪些原因？</div>
+        <div class="a">答：根据 GB/T 1535-2017《大豆油》，一级大豆油酸价（以 KOH 计）的限值要求为
+          <span class="wrong">≤ 0.20 mg/g</span>；超标通常与原料酸败、精炼脱酸不彻底、储存温度过高有关……</div>
+      </div>
+      <div style="font-size:13px;color:var(--sub)">模型输出格式规范、引用标准号、语气高度自信，但<b style="color:var(--red)">核心限值数字错误</b>。</div>
+    </div>
+
+    <!-- 右：国家标准真实规定 -->
+    <div class="card">
+      <h2>国家标准原文 <span class="tag good">GB/T 1535-2017</span></h2>
+      <table>
+        <thead><tr><th>等级</th><th>酸价 (mg/g)</th><th>过氧化值 (mmol/kg)</th></tr></thead>
+        <tbody>
+          <tr><td><b>一级</b></td><td class="hl">≤ 0.50</td><td>≤ 5.0</td></tr>
+          <tr><td>二级</td><td>≤ 2.0</td><td>≤ 6.0</td></tr>
+          <tr><td>三级</td><td colspan="2">按 GB 2716 执行</td></tr>
+        </tbody>
+      </table>
+      <div style="font-size:13px;color:var(--sub);margin-top:10px">数据来源：GB/T 1535-2017 表3 成品大豆油质量指标。一级大豆油酸价真实限值为 <b style="color:var(--green)">≤ 0.50 mg/g</b>。</div>
+    </div>
+  </div>
+
+  <h2 style="font-size:16px;margin:30px 0 0">架构演进对照：同一道题的实测答案</h2>
+  <div style="font-size:12.5px;color:var(--sub);margin-top:5px">问题完全相同（一级大豆油酸价的国标限值是多少），只改架构、不改模型。</div>
+  <div class="evo">
+    <div class="card">
+      <h3>Day 2 · 裸问 <span class="tag bad">数字错</span></h3>
+      <div class="sub">无工具、不查表，模型凭记忆作答</div>
+      <div class="code">答：依据 GB/T 1535-2017，一级大豆油酸价 ≤ 0.20 mg/g</div>
+      <div class="body">输出限值 <span class="bad2">0.20</span>（2003 旧版数值）—— <b>幻觉</b>。</div>
+    </div>
+    <div class="card">
+      <h3>Day 4 · 工具调用 <span class="tag good">数字对</span></h3>
+      <div class="sub">模型只说"要查表"，代码负责执行查表</div>
+      <div class="code">模型要调: lookup_limit | 参数: {'oil':'大豆油','grade':'一级','indicator':'酸价'} | 工具返回: {"限值": 0.5, "标准号": "GB/T 1535-2017"}</div>
+      <div class="body">限值 <span class="good2">0.50</span> 由代码从标准表取出 —— <b>已有出处</b>。但只打印结果，未形成结论。</div>
+    </div>
+    <div class="card">
+      <h3>Day 5 · 闭环 <span class="tag good">可交付</span></h3>
+      <div class="sub">结果回传模型，模型开口给结论</div>
+      <div class="code">最终答案: 一级大豆油酸价国标限值 ≤ 0.5 mg KOH/g，依据标准 GB/T 1535-2017</div>
+      <div class="body">限值与标准号均带出处，并组织成自然语言结论 —— <b>Agent 闭环达成</b>。</div>
+      <div class="note">⚠️ 尚未解决：单位 <b>mg KOH/g</b>、"推荐性国标""企业内控通常严于国标"等语句工具并未返回，是模型自行补充的，<b>目前无出处可查</b>。这正是下一步要补的设计——把单位也放进标准表，并要求"每句都有 source"。</div>
+    </div>
+    <div class="card">
+      <h3>Day 6 · 框架托管 <span class="tag info">同等结果 · 更少代码</span></h3>
+      <div class="sub">smolagents 框架接管循环、历史与工具调度</div>
+      <div class="code">Step 1: result = lookup_limit(oil="大豆油", grade="一级", indicator="酸价")
+        → {"限值": 0.5, "标准号": "GB/T 1535-2017"}
+Step 2: final_answer("…限值为 0.5 mg KOH/g，依据标准为 GB/T 1535-2017。")</div>
+      <div class="body">结论与 Day 5 一致，但模型这次<b>直接写出可执行的 Python 代码行</b>，由框架解析执行；Day 5 手写的三十行循环被压缩为 <b>一句 <code style="font-size:12px">agent.run()</code></b>。限值仍来自标准表，<b>0.5 依旧不是模型说的</b>。</div>
+      <div class="note">框架省的是重复劳动，不是原理；出处缺口与 Day 5 完全相同（单位仍由模型补），说明<b>换框架解决不了"出处"问题，得靠设计</b>。</div>
+    </div>
+  </div>
+
+  <div class="insight" style="margin-top:18px">
+    <span class="k">演进结论：</span>四次作答，<b>模型没换、提示词几乎没改，唯一的变量是架构</b> —— 从"让模型背"到"让代码查"、再到"查完让模型解释"、最后"交给框架托管"。
+    限值由 0.20 修正为 0.50，靠的不是模型变聪明，而是<b>数字的来源从"模型的记忆"换成了"代码里的标准表"</b>。Day 6 进一步说明：<b>框架只降低工程成本，不改变正确性来源</b>。
+  </div>
+
+  <div class="insight">
+    <span class="k">为什么它错得这么"专业"？——版本混淆型幻觉。</span><br>
+    0.20 mg/g 其实是 <b>旧版 GB/T 1535-2003</b> 中一级大豆油的酸价限值；现行 2017 版已放宽为 ≤0.50。模型<b>引用了正确的标准号（2017），却填入了旧版（2003）的数值</b>。
+    这类错误最难被发现——它不是凭空乱编，而是把<b>真实存在但版本已过期</b>的信息拼接起来：标准号、单位、格式全对，唯独数字是无效的旧数据。
+  </div>
+
+  <div class="verdict">
+    <b>核心结论：</b>模型给出的限值 <b>0.20 ≠ 现行标准 0.50</b>，仅一个数字之差，却可使同一批油的判定由"合格"翻转为"不合格"。
+    这证明在食品质检场景<b>不可依赖模型记忆</b>——必须"代码查表算数、模型只负责解释"，即 <b>模型不算数，代码算数</b>。
+  </div>
+
+  <div class="src">说明：左侧为 DeepSeek 大模型 2026-10-04 实测输出片段（已脱敏）；右侧数值以 GB/T 1535-2017 国家标准文本为准，建议论文定稿前再次核对最新有效版本。</div>
+  <div class="foot">FoodQC-Agent · 毕业设计课题素材</div>
+</div>
+</body>
+</html>
