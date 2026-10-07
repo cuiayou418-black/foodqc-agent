@@ -29,7 +29,7 @@
 ```bash
 cd foodqc-agent
 . .venv/Scripts/activate
-pip install openai python-dotenv smolagents
+pip install -r requirements.txt
 # 在 .env 中填入 DEEPSEEK_API_KEY=sk-xxx
 python day6_agent.py
 ```

@@ -1,0 +1,3 @@
+openai==3.24.0
+python-dotenv==1.2.4
+smolagents==1.26.0
