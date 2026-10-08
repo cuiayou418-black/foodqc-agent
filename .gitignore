@@ -1,3 +1,6 @@
 .venv/
 .env
 __pycache__/
+
+# 仅本地使用的个人流程文档，不进公开仓库（VS Code 自用即可）
+notes/提交指南.md
