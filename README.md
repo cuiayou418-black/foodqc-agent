@@ -1,39 +1,109 @@
-# FoodQC-Agent · W1 雏形
+# FoodQC-Agent · 食用油中控质检辅助智能体
 
-> 食用油中控质检辅助智能体（毕业设计雏形）· 第一周学习产出
+> 毕业设计项目 —— 基于领域知识图谱与大语言模型的食用油中控质检辅助智能体
+> 切入场景：**酸价 / 过氧化值异常的判读与根因溯源**
 
-## 这是什么
-基于「大语言模型 + 工具调用」的食用油质检辅助 Agent 最小可行原型。
-核心原则：**模型不算数，代码算数**——标准限值存在代码里的标准表，模型只负责"抽取 / 调用 / 组织语言"，权威数字永远来自代码。
+---
 
-## W1 进度（Day 1–6 已完成）
+## 这个项目要解决什么
+
+食用油质检最怕的一件事：**通用大模型会一本正经地编数字**。
+
+本项目的第一天实测就是铁证 —— 直接问模型"一级大豆油酸价限值是多少"，它答 **`0.20 mg KOH/g`（错误）**；而让它调用工具去查标准库，正确值是 **`0.50`**。
+
+FoodQC-Agent 的回答是：**模型负责理解与组织语言，权威数字和判定结论一律由代码产出。**
+
+---
+
+## 四条核心设计原则
+
+| # | 原则 | 落地方式 |
+|---|---|---|
+| ① | **模型不算数，代码算数** | 限值取自标准库，判定由代码比大小，模型只做解释 |
+| ② | **答案必带出处** | 每个数值必须能追溯到国标条款，可翻回原文核对 |
+| ③ | **只读不写源数据** | Agent 不修改任何原始质检记录 |
+| ④ | **低置信度 / 安全指标强制转人工** | Agent 辅助查证，**绝不自动放行** |
+
+---
+
+## 架构：Agent 四件套
+
+| 支柱 | 角色 | 本项目实现 |
+|---|---|---|
+| **大模型** | 脑 | DeepSeek（OpenAI 兼容接口） |
+| **记忆** | 知识仓库 | 国标语料库 / 领域知识图谱（建设中） |
+| **工具** | 手 | `lookup_limit` 查标准、`calc` 计算判定 |
+| **Skill** | 工艺规矩 | 上述四条原则，横切贯穿全流程 |
+
+---
+
+## 进度（Day 1–9）
+
 | Day | 内容 | 交付 |
 |---|---|---|
-| 1 | 环境搭建（Python + Git + VS Code + venv） | 可运行环境 |
-| 2 | 第一次调通 LLM 对话 | `hello_llm.py`（暴露模型幻觉） |
+| 1 | 环境搭建（Python / venv / Git / VS Code） | 可运行环境 |
+| 2 | 首次调通 LLM | `hello_llm.py`（**暴露模型幻觉**） |
 | 3 | 结构化 JSON 抽取 | `struct_out.py` |
-| 4 | Tool Calling：模型说要查、代码去查 | `tool_calling.py`（查表得 0.50，对） |
-| 5 | 手写 Agent 闭环 | `mini_agent.py`（查完回传、模型开口） |
-| 6 | smolagents 框架版 | `day6_agent.py`（框架托管循环） |
+| 4 | Tool Calling：模型说要查、代码去查 | `tool_calling.py`（查表得 0.50，正确） |
+| 5 | 手写 Agent 闭环（ReAct） | `mini_agent.py` |
+| 6 | smolagents 框架版 | `day6_agent.py` |
+| 7 | 版本管理收口 | 仓库规范化 + 提交规范 |
+| 8 | **加固：三道保险 + 代码硬闸门** | `mini_agent_safe.py`（★ 核心） |
+| 9 | Agent 原理补全 | `notes/W2原理笔记.md` |
 
-## 目录
-- `*.py` —— 各 Day 的代码
-- `docs/` —— 四张实测证据截图 + 「架构演进对照」图
-  - `01_幻觉实证_酸价限值.png`（Day2 模型答错 0.20）
-  - `02_工具调用_酸价限值正确.png`（Day4 查表得 0.50）
-  - `03_Agent闭环_最终答案.png`（Day5 闭环）
-  - `04_smolagents框架_最终答案.png`（Day6 框架版）
-- `notes/` —— 每日学习笔记（模板见 `notes/模板.md`）
+---
 
-## 运行方式
-```bash
-cd foodqc-agent
-. .venv/Scripts/activate
-pip install -r requirements.txt
-# 在 .env 中填入 DEEPSEEK_API_KEY=sk-xxx
-python day6_agent.py
+## ★ 亮点：四级防护实证证据链（Day 8）
+
+把工具置于**故障态**，实测模型的退化行为与各级防护的真实效果：
+
+| 阶段 | 约束载体 | 模型真实行为 | 可靠性 |
+|---|---|---|---|
+| **A** | 无 | 工具失效后**偷偷自己心算 60%，还照样判"合格"** | ❌ 危险 |
+| **B** | 错误提示带"可用工具" | 第 2 步自己改对工具名，完成自愈 | 🔶 可用 |
+| **C** | System 提示词约束 | 拒答转人工，但属"概率性听话" | 🔶 软约束 |
+| **D** | **代码硬闸门** | 系统直接拦截输出，模型无发言权 | ✅ 100% |
+
+**核心结论**：提示词层的规矩不但概率性生效，**还会互相打架**（C 阶段那条"失败即拒答"直接掐死了 B 阶段的自愈能力）。真正可靠的约束必须**下沉到代码**。
+
+📸 完整证据截图见 `docs/05–09`，索引说明见 `docs/证据索引.md`。
+
+---
+
+## 目录结构
+
+```
+foodqc-agent/
+├── hello_llm.py          # Day2  裸问 LLM（暴露幻觉）
+├── struct_out.py         # Day3  JSON 结构化输出
+├── tool_calling.py       # Day4  工具调用
+├── mini_agent.py         # Day5  手写 Agent 闭环
+├── day6_agent.py         # Day6  smolagents 框架版
+├── mini_agent_safe.py    # ★Day8 加固版：三保险 + 代码硬闸门
+├── docs/                 # 9 张实测证据截图 + 对比图 + 证据索引
+├── notes/                # 学习笔记（W1 / W2 原理 / 模板）
+└── requirements.txt
 ```
 
-## 安全说明
-`.env`（含 API Key）、`.venv/`、`__pycache__/` 已在 `.gitignore` 中，**不会进入版本库**。
-克隆本仓库后需自行配置 `.env`。
+---
+
+## 运行方式
+
+```bash
+cd foodqc-agent
+python -m venv .venv
+. .venv/Scripts/activate        # Windows（macOS/Linux 用 source .venv/bin/activate）
+pip install -r requirements.txt
+
+# 在 .env 中填入 DEEPSEEK_API_KEY=sk-xxx
+python mini_agent_safe.py       # 推荐：加固版 Agent
+```
+
+依赖：`openai==3.24.0` / `python-dotenv==1.2.4` / `smolagents==1.26.0`
+
+---
+
+## 安全与合规说明
+
+- `.env`（含 API Key）、`.venv/`、`__pycache__/` 已在 `.gitignore` 中，**不会进入版本库**；克隆后需自行配置 `.env`。
+- **质检场景定位**：Agent 仅作辅助查证，**最终放行权归代码与人工** —— 这是本项目区别于普通 AI 问答类毕设的关键设计。
