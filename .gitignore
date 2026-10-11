@@ -4,3 +4,12 @@ __pycache__/
 
 # 仅本地使用的个人流程文档，不进公开仓库（VS Code 自用即可）
 notes/提交指南.md
+
+# 热量计算器发布目录（该目录是独立的 GitHub Pages 仓库，不进本项目仓库）
+dist/
+calorie-qr.png
+
+# 非主线实验产物（2026-10-09 视频/音频生成实验），与毕设无关且含大文件，不进公开仓库
+build/
+dragon_king/
+tools/
