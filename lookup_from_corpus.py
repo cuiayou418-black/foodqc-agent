@@ -15,21 +15,42 @@ def load_md_chunks():
     return chunks
 
 def load_json_limits():
-    """读 limits.json，取出标准类条目（跳过下划线开头的说明节点）"""
+    """读 limits.json，把每个标准的子主题拆成独立小块（避免元数据淹没关键值）"""
     path = os.path.join(CORPUS_DIR, "limits.json")
     if not os.path.exists(path):
         return []
     with open(path, encoding="utf-8") as f:
         data = json.load(f)
+
+    def flatten(obj, prefix, pieces):
+        """递归展开嵌套字典，最终产出 '路径: 值' 形式的碎片"""
+        if isinstance(obj, dict):
+            for k, v in obj.items():
+                flatten(v, f"{prefix} → {k}" if prefix else k, pieces)
+        elif isinstance(obj, list):
+            for item in obj:
+                pieces.append(f"{prefix}: {item}")
+        else:
+            pieces.append(f"{prefix}: {obj}")
+
     out = []
     for key, val in data.items():
-        if key.startswith("_"):          # 我自己加的说明节点，不是标准
+        if key.startswith("_"):
             continue
-        if isinstance(val, dict):
-            head = f'{val.get("标准号","")} {val.get("标准名称","")}'
-            body = json.dumps(val, ensure_ascii=False)
-            out.append({"source": f"limits.json → {key}", "text": head + " " + body})
+        if not isinstance(val, dict):
+            continue
+        # ① 标准头单独成片
+        head = f'{val.get("标准号","")} {val.get("标准名称","")}（{val.get("实施日期","")}实施）'
+        out.append({"source": f"limits.json → {key}", "text": head})
+        # ② 每个子主题单独成片（这是关键）
+        for k2, v2 in val.items():
+            if isinstance(v2, dict):
+                pieces = []
+                flatten(v2, k2, pieces)
+                out.append({"source": f"limits.json → {key} → {k2}",
+                            "text": f"{key} {k2} " + " ".join(pieces)})
     return out
+
 
 CORPUS = load_md_chunks() + load_json_limits()
 
@@ -59,7 +80,7 @@ def lookup_from_corpus(query, top_k=3):
     if not scored:
         return json.dumps({"结论": "语料库中未找到相关内容",
                            "建议": "请人工核对标准原文，不得推算"}, ensure_ascii=False)
-    results = [{"出处": c["source"], "得分": s, "内容": c["text"][:300]}
+    results = [{"出处": c["source"], "得分": s, "内容": c["text"][:800]}
                for s, c in scored[:top_k]]
     return json.dumps({"查询": query, "命中片段数": len(scored), "结果": results},
                       ensure_ascii=False, indent=2)
