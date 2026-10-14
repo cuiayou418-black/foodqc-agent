@@ -190,6 +190,26 @@ python mini_agent_safe.py       #    加固版 Agent（Day8）
 
 详见 `docs/证据索引.md`。
 
+### 📸 关键证据图（jsDelivr 加速 · 国内网络可直接查看）
+
+> GitHub 原生图片链接依赖 `raw.githubusercontent.com`，部分网络（如中国大陆多数网络）无法访问，会导致图片破损。以下改用 **jsDelivr 加速镜像**，国内可正常显示。
+
+**① Day 8 · 代码硬闸门拦截（四级防护 D 阶段）**
+
+![Day8 硬闸门](https://cdn.jsdelivr.net/gh/cuiayou418-black/foodqc-agent@main/docs/09_hard_gate_system_intercept.png)
+
+**② Day 12 · 一次检索命中即给出完整判定（不合格 + 出处 + 易错点）**
+
+![Day12 一次命中判定](https://cdn.jsdelivr.net/gh/cuiayou418-black/foodqc-agent@main/docs/12_day12_single_hit_fail_verdict.png)
+
+**③ Day 12 · 质疑提问：识别"对象错配"并分领域作答**
+
+![Day12 对象错配质疑](https://cdn.jsdelivr.net/gh/cuiayou418-black/foodqc-agent@main/docs/13_day12_object_mismatch_1.png)
+
+> 全部 15 张证据见 `docs/` 目录；若上图未能显示，可在原链接中把
+> `raw.githubusercontent.com/cuiayou418-black/foodqc-agent/main/`
+> 替换为 `cdn.jsdelivr.net/gh/cuiayou418-black/foodqc-agent@main/` 后重试。
+
 > ⚠️ **网络说明（图片无法在线显示时请读这条）**
 > GitHub 对仓库内图片的预览依赖 `raw.githubusercontent.com` 域名。**部分网络环境（如中国大陆的多数网络）无法访问该域名**，会导致上述截图在网页上显示为破损图标——这是网络问题，**不是文件损坏**。
 > 两种解决办法：① **下载本仓库后，在本地打开 `docs/` 目录查看**；② 直接阅读上面的文字版证据说明与表格（核心结论均已用文字完整呈现，不依赖图片）。
