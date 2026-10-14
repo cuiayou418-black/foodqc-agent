@@ -1,0 +1,120 @@
+{
+  "report": {
+    "title": "食用油中控品控日报",
+    "plant": "第一油脂工厂",
+    "report_for": "previous_day",
+    "timezone_offset": 8
+  },
+  "source": {
+    "type": "sql",
+    "simulated": {
+      "seed_salt": "foodqc",
+      "batches_per_day": 8,
+      "anomaly_rate": 0.12
+    },
+    "api": {
+      "base_url": "",
+      "token_env": "QC_API_TOKEN",
+      "endpoints": {
+        "production": "/api/production",
+        "quality": "/api/quality",
+        "warehouse": "/api/warehouse"
+      },
+      "timeout": 15
+    },
+    "sql": {
+      "driver": "sqlite3",
+      "dsn": "qc_source.db",
+      "queries": {
+        "production": "SELECT batch_id, product, line, planned_qty, actual_qty, started_at, finished_at FROM production WHERE date(started_at) = :report_date",
+        "quality": "SELECT batch_id, product, item, value, unit, direction, limit_value, standard, limit_source, tested_at, inspector, lab FROM quality WHERE date(tested_at) = :report_date",
+        "warehouse": "SELECT batch_id, warehouse, event, qty, temp, humidity, occurred_at FROM warehouse WHERE date(occurred_at) = :report_date"
+      }
+    }
+  },
+  "products": {
+    "一级浸出大豆油": {
+      "items": {
+        "酸价":         {"unit": "mg/g",   "direction": "≤", "limit": 0.5,  "standard": "GB/T 1535—2026", "limit_source": "表4 一级（原文第5页）"},
+        "过氧化值":     {"unit": "g/100g", "direction": "≤", "limit": 0.13, "standard": "GB/T 1535—2026", "limit_source": "表4 一级（原文第5页）"},
+        "水分及挥发物": {"unit": "%",      "direction": "≤", "limit": 0.1,  "standard": "GB/T 1535—2026", "limit_source": "表4 一级（原文第5页）"},
+        "不溶性杂质":   {"unit": "%",      "direction": "≤", "limit": 0.05, "standard": "GB/T 1535—2026", "limit_source": "表4 一级（原文第5页）"},
+        "溶剂残留量":   {"unit": "mg/kg",  "direction": "≤", "limit": 20,   "standard": "GB 2716—2018",   "limit_source": "表2 食用植物油（原文第3页）；GB/T 1535 表4 一级要求'不应检出'"},
+        "烟点":         {"unit": "℃",     "direction": "≥", "limit": 190,  "standard": "GB/T 1535—2026", "limit_source": "表4 一级（原文第5页）"}
+      }
+    },
+    "浸出大豆原油": {
+      "items": {
+        "酸价":         {"unit": "mg/g",   "direction": "≤", "limit": 4.0,  "standard": "GB/T 1535—2026", "limit_source": "表2 大豆原油（原文第4页）"},
+        "过氧化值":     {"unit": "g/100g", "direction": "≤", "limit": 0.25, "standard": "GB/T 1535—2026", "limit_source": "表2 大豆原油（原文第4页）"},
+        "水分及挥发物": {"unit": "%",      "direction": "≤", "limit": 0.2,  "standard": "GB/T 1535—2026", "limit_source": "表2 大豆原油（原文第4页）"},
+        "不溶性杂质":   {"unit": "%",      "direction": "≤", "limit": 0.2,  "standard": "GB/T 1535—2026", "limit_source": "表2 大豆原油（原文第4页）"},
+        "溶剂残留量":   {"unit": "mg/kg",  "direction": "≤", "limit": 100,  "standard": "GB/T 1535—2026", "limit_source": "表2 浸出法（原文第4页）"}
+      }
+    },
+    "食用植物调和油": {
+      "items": {
+        "酸价":       {"unit": "mg/g",   "direction": "≤", "limit": 3.0, "standard": "GB 2716—2018", "limit_source": "表2 食用植物油（含调和油）（原文第3页）"},
+        "过氧化值":   {"unit": "g/100g", "direction": "≤", "limit": 0.25, "standard": "GB 2716—2018", "limit_source": "表2 食用植物油（含调和油）（原文第3页）"},
+        "溶剂残留量": {"unit": "mg/kg",  "direction": "≤", "limit": 20,  "standard": "GB 2716—2018", "limit_source": "表2 食用植物油（原文第3页）"}
+      }
+    }
+  },
+  "warehouse_limits": {
+    "temp_min": 5,
+    "temp_max": 30,
+    "humidity_min": 40,
+    "humidity_max": 70
+  },
+  "analysis": {
+    "near_limit_ratio": 0.8,
+    "trend_days": 7
+  },
+  "alert_rules": [
+    {"id": "pass_rate_low",       "level": "critical", "metric": "overall_pass_rate",         "op": "<",  "value": 0.95, "title": "总体合格率跌破 95%",        "detail": "当日总体合格率 {value:.2%}，低于红线 95%，请立即组织复盘"},
+    {"id": "batch_fail",           "level": "critical", "metric": "abnormal_batch_count",      "op": ">=", "value": 1,    "title": "出现不合格/异常批次",       "detail": "当日检出 {value} 个异常批次，详见日报异常批次明细"},
+    {"id": "item_fail_spike",      "level": "warning",  "metric": "max_item_fail_count",       "op": ">=", "value": 3,    "title": "单项缺陷集中出现",           "detail": "有检测项目当日失败 {value} 项次，疑似系统性偏差"},
+    {"id": "warehouse_violation",  "level": "warning",  "metric": "warehouse_violation_count", "op": ">=", "value": 1,    "title": "仓储环境超限",               "detail": "当日库温/湿度超限 {value} 次，存在品质劣变风险"},
+    {"id": "near_limit",           "level": "info",     "metric": "near_limit_count",          "op": ">=", "value": 3,    "title": "多项指标接近限值",           "detail": "当日 {value} 个项次限值利用率 ≥ 80%，建议关注工艺波动"},
+    {"id": "production_shortfall", "level": "warning",  "metric": "production_achievement",    "op": "<",  "value": 0.9,  "title": "产量达成率不足 90%",        "detail": "当日产量达成率 {value:.2%}"}
+  ],
+  "push": {
+    "console": {"enabled": true},
+    "email": {
+      "enabled": false,
+      "dry_run": true,
+      "smtp_host": "",
+      "smtp_port": 465,
+      "use_ssl": true,
+      "username": "",
+      "password_env": "QC_SMTP_PASSWORD",
+      "sender": "",
+      "receivers": [],
+      "subject_prefix": "【品控预警】"
+    },
+    "webhook": {
+      "enabled": false,
+      "dry_run": true,
+      "url": "",
+      "url_env": "QC_WEBHOOK_URL",
+      "platform": "wecom",
+      "timeout": 10
+    }
+  },
+  "export": {
+    "formats": ["html", "pdf", "excel"],
+    "output_dir": "qc_daily_data"
+  },
+  "web": {
+    "host": "0.0.0.0",
+    "port": 8000,
+    "token": "",
+    "token_env": "QC_WEB_TOKEN",
+    "start_scheduler": false
+  },
+  "schedule": {
+    "time": "07:30",
+    "catch_up": false,
+    "timezone_offset": 8
+  }
+}

@@ -1,3 +1,8 @@
 openai==3.24.0
 python-dotenv==1.2.4
 smolagents==1.26.0
+# 品控日报智能体（qc_daily）：Excel/PDF 导出
+openpyxl==3.1.5
+reportlab==5.0.1
+# 品控日报智能体（qc_daily）：Web 服务
+flask==3.1.3

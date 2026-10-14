@@ -123,6 +123,23 @@ foodqc-agent/
 ├── mini_agent_safe.py      # ★Day8  加固版：三保险 + 代码硬闸门
 ├── lookup_from_corpus.py   # ★Day11 语料检索工具（召回 + 出处 + 拒答）
 ├── mini_agent_memory.py    # ★Day12 缝合版：双工具 + 数字硬闸门
+├── qc_daily/               # ★W3   品控日报自动化智能体（独立子系统）
+│   ├── agent.py            #   主编排器：采集→校验→分析→报告→导出→推送→审计
+│   ├── collectors.py       #   三系统数据采集（模拟 / HTTP API / SQL）+ 数据校验
+│   ├── analysis.py         #   合格率/缺陷分布/异常批次/趋势 + 预警规则评估
+│   ├── templates.py        #   日报 HTML 模板（打印友好）
+│   ├── exporters.py        #   Excel（8 Sheet）/ PDF（中文字体）导出
+│   ├── alerting.py         #   预警推送：控制台 / 邮件（SMTP）/ Webhook（企微·钉钉·Slack）
+│   ├── audit.py            #   只追加审计日志 + 原始快照 + 报告指纹防篡改
+│   ├── scheduler.py        #   定时调度（每日定时 + 遗漏补跑）
+│   ├── config.py           #   配置系统（产品限值/规则/渠道全部数据驱动）
+│   ├── models.py           #   数据模型（每条记录自带溯源信息）
+│   ├── console.py          #   Windows GBK 控制台安全输出
+│   ├── webapp.py           #   Flask Web 应用（仪表盘/日报/生成/审计）
+│   ├── webtemplates.py     #   Web 界面模板（内联 CSS，无 CDN 依赖）
+│   ├── importer.py         #   数据导入：Excel/CSV → SQLite（中文表头自动映射）
+│   └── cli.py              #   命令行入口（run/daemon/backfill/selftest/show/verify/web/import）
+├── qc_daily_config.json    # W3   日报智能体配置（限值与 corpus/limits.json 同源）
 ├── corpus/                 # ★Day10 国标语料库（11 个文件 / 18 份国标）
 │   ├── limits.json         #   结构化限值库（16 个顶层条目，供代码读取）
 │   ├── 限值速查_食用油.md
@@ -132,9 +149,133 @@ foodqc-agent/
 │   ├── 安全限量_真菌毒素与污染物.md
 │   ├── GB5009.22_黄曲霉毒素测定.md
 │   └── 感官与溶剂残留_GB5525与GB5009.262.md
+├── qc_daily_data/          # W3   运行时产物（报告/快照/审计日志，已 gitignore）
 ├── docs/                   # 15 张实测证据截图 + 对比图 + 证据索引
 └── notes/                  # 学习笔记（W1 / W2 原理 / 模板）
 ```
+
+---
+
+## ★ 亮点四：品控日报自动化智能体（W3 · `qc_daily/`）
+
+从"辅助查证"扩展到"过程监控"：一个**全自动生成品控日报**的智能体，
+每天定时从生产（MES）、质检（LIMS）、仓储（WMS）三类系统采集数据，
+按模板生成含**合格率、缺陷分布、异常批次、趋势分析**四大模块的日报，
+支持**定时任务、异常预警、多格式导出（HTML/PDF/Excel）、邮件/Webhook 推送**。
+
+> ⚠️ **默认不生成演示数据**：数据源默认为 `sql`（你导入的真实数据）。
+> **未导入数据/未连接公司数据源时，系统不产出任何日报**——运行会直接提示
+> "尚未导入任何数据"，网站各页面显示空态。模拟数据源仅用于自测：
+> `python -m qc_daily selftest`（内部临时切换，不影响配置）。
+
+### 流水线（一次 run 的完整生命周期）
+
+```
+解析日期 → 采集三系统数据 → 数据校验 → 落盘原始快照 → 代码计算指标
+→ 评估预警规则 → 渲染 HTML 日报 → 导出 PDF/Excel → 推送预警 → 写审计日志
+```
+
+### 四条质量承诺（与 Day12 四原则同源）
+
+| 承诺 | 落地方式 |
+|---|---|
+| **数据准确** | 判定全部由代码比大小（`compare()`），限值来自配置且与 `corpus/limits.json` 同源；采集后过一遍校验（批次唯一性、质检记录引用完整性、数值合法性），**error 级拒绝发报告——宁可不发，不可错发** |
+| **生成及时** | `DailyScheduler` 每天 07:30 自动生成昨日日报；`catch_up` 启动时自动补齐遗漏日期；任何一步失败不中断已产出部分（status=partial） |
+| **可追溯** | ① 原始快照全量落盘（只写一次）② JSONL 只追加审计日志（运行全要素）③ 报告 SHA-256 指纹内嵌，`verify` 命令可验真 |
+| **只读源数据** | 所有产物都是新增文件，绝不修改任何原始记录 |
+
+### 快速开始
+
+```bash
+python -m qc_daily selftest                  # ★ 端到端自测（模拟数据，7 项断言）
+python -m qc_daily run --date 2026-10-13     # 立即生成指定日期日报
+python -m qc_daily run                       # 生成昨日日报（默认）
+python -m qc_daily daemon --catch-up         # 常驻调度：每天 07:30 自动生成
+python -m qc_daily backfill --days 14        # 补齐最近 14 天（构建趋势历史）
+python -m qc_daily verify --date 2026-10-13  # 校验报告未被篡改
+python -m qc_daily show                      # 查看运行历史
+python -m qc_daily config-check              # 配置自检
+```
+
+接真实系统时改 `qc_daily_config.json` 的 `source.type` 即可（`api` / `sql`），
+代码零改动；预警规则、产品限值、推送渠道同样全部配置驱动。
+
+### 接入自己的数据（网页导入 · 推荐）
+
+启动网站后打开「**数据导入**」页，全程不用碰终端：
+
+1. **拖拽**文件到上传区，或点击选择文件（支持 `.xlsx` / `.csv` / `.json`，单文件 ≤ 20MB）；
+2. 上传时显示**进度条**（实时百分比 + 已传字节数）；
+3. 导入完成后给出明确反馈：每个文件/sheet 被识别成的表类型、导入行数、覆盖日期、
+   **表头映射明细**（如 `批次号→batch_id`）、提示与错误；
+4. 页面下方实时展示**已导入数据概要**：生产/质检/仓储三张表的记录数、覆盖天数、日期范围；
+5. 到「生成日报」页选择 **SQL 数据库**数据源，即可用导入的数据出报。
+
+> 格式不对（如 `.txt`）、文件为空、超过 20MB，都会即时弹错并不会写坏数据库。
+
+### 接入自己的数据（命令行导入）
+
+```bash
+# 1. 先预览（不写库）：确认表头映射正确
+python -m qc_daily import --file 我的数据.xlsx --dry-run
+# 2. 正式导入（写入 qc_source.db）
+python -m qc_daily import --file 我的数据.xlsx
+# 3. 切到 SQL 数据源，用真实数据出报
+python -m qc_daily run --date 2026-10-12 --source sql
+# 4. 网站长期使用真实数据：把配置里 "source": {"type": "simulated"} 改成 "sql"，再
+python -m qc_daily web --scheduler
+```
+
+导入工具的能力（为贴近国内企业数据习惯设计）：
+
+- **中文表头自动识别**：批次号→batch_id、产品名称→product、实测值→value、检验日期→tested_at……
+  也兼容英文表头；带单位后缀也能认（`计划产量(t)`、`温度(℃)`）；
+- **宽表质检报表自动翻转**：很多企业的质检报表是"一个批次一行，酸价/过氧化值每项一列"，
+  导入时自动翻成系统要求的长表（一个批次×一个项目一行）；
+- **JSON 多表一次导入**：`{"production": [...], "quality": [...], "warehouse": [...]}`
+  （也认中文键"生产/质检/仓储"）或记录数组；
+- **缺的字段按配置补齐**：表里没有单位/方向/限值/标准/出处时，按 `qc_daily_config.json`
+  的产品限值自动填——**限值只来自配置（与国标语料同源），不猜**；
+- **同日期重复导入自动刷新**（先删后插），修正数据后重新导入即可；
+- 多个文件可放一个目录，用 `--dir` 批量导入。
+
+> 只有质检数据没有生产数据也能出报（产量指标显示"无产量数据"，不阻断报告）；
+> 但**没有限值的项目无法判定合格与否**——把产品/项目加进配置的 `products` 即可。
+
+### Web 网站部署（局域网演示）
+
+```bash
+python -m qc_daily web                      # 启动网站（默认 8000 端口，自动打开浏览器）
+python -m qc_daily web --scheduler          # 同时内嵌每日定时调度（网站本身即服务）
+python -m qc_daily web --port 8080          # 换端口
+```
+
+启动后终端会打印两个地址：**本机** `http://127.0.0.1:8000/` 和**局域网** `http://192.168.x.x:8000/`。
+答辩/演示时，让其他人的设备连同一个 Wi-Fi，用局域网地址即可访问（无需对方装任何东西）。
+
+网站功能：仪表盘（KPI + 合格率趋势图 + 最新预警）、日报列表（在线查看/下载 PDF·Excel/一键校验）、
+网页上一键生成日报、预警记录、审计日志。
+
+⚠️ **首次启动若别人打不开**：Windows 防火墙会拦 Python，启动时弹窗选“允许专用网络”即可；
+或用管理员身份执行 `netsh advfirewall firewall add rule name="QCDailyWeb" dir=in action=allow protocol=tcp localport=8000`。
+
+🔒 **登录保护**（演示可不设；换环境公开访问务必设置）：
+```bash
+set QC_WEB_TOKEN=你的口令        # Windows CMD（PowerShell 用 $env:QC_WEB_TOKEN="你的口令"）
+python -m qc_daily web           # 之后访问网站需先输口令
+```
+
+> 说明：Flask 内置服务器适用于局域网演示；若日后要上公网/云服务器，
+> 建议换 `waitress`（`waitress-serve --host 0.0.0.0 --port 8000 qc_daily.webapp:app`）并配置 HTTPS。
+
+### 实测结果（2026-10-14 selftest）
+
+- 7/7 断言通过：采集 8 批次 / 39 项次质检记录，总体合格率 97.44%，命中 2 条预警；
+- 同日两次采集**数据指纹完全一致**（模拟源确定性，保证日报可复现）；
+- 报告指纹校验通过：改动 HTML 任一字符，`verify` 立即报"可能被篡改"；
+- 邮件/Webhook 默认 `dry_run` 演练模式（内容落盘 `outbox/`），验证链路又不误发；
+- **Web 网站**（2026-10-14 实测）：仪表盘/日报列表/iframe 在线查看/PDF·Excel 下载/网页一键生成/
+  预警记录/审计日志全部 200；登录保护（token）302 跳转与错误口令提示正常；`--scheduler` 模式调度线程正常启动。
 
 ---
 
@@ -196,15 +337,15 @@ python mini_agent_safe.py       #    加固版 Agent（Day8）
 
 **① Day 8 · 代码硬闸门拦截（四级防护 D 阶段）**
 
-![Day8 硬闸门](https://cdn.jsdelivr.net/gh/cuiayou418-black/foodqc-agent@main/docs/09_hard_gate_system_intercept.png)
+![Day8 硬闸门](https://cdn.jsdelivr.net/gh/cuiayou418-black/foodqc-agent@main/docs/09_硬闸门_系统拦截.png)
 
 **② Day 12 · 一次检索命中即给出完整判定（不合格 + 出处 + 易错点）**
 
-![Day12 一次命中判定](https://cdn.jsdelivr.net/gh/cuiayou418-black/foodqc-agent@main/docs/12_day12_single_hit_fail_verdict.png)
+![Day12 一次命中判定](https://cdn.jsdelivr.net/gh/cuiayou418-black/foodqc-agent@main/docs/12_Day12_一次命中_失败判定.png)
 
 **③ Day 12 · 质疑提问：识别"对象错配"并分领域作答**
 
-![Day12 对象错配质疑](https://cdn.jsdelivr.net/gh/cuiayou418-black/foodqc-agent@main/docs/13_day12_object_mismatch_1.png)
+![Day12 对象错配质疑](https://cdn.jsdelivr.net/gh/cuiayou418-black/foodqc-agent@main/docs/13_Day12_对象不匹配_1.png)
 
 > 全部 15 张证据见 `docs/` 目录；若上图未能显示，可在原链接中把
 > `raw.githubusercontent.com/cuiayou418-black/foodqc-agent/main/`

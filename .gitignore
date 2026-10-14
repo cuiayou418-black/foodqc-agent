@@ -13,3 +13,7 @@ calorie-qr.png
 build/
 dragon_king/
 tools/
+
+# 品控日报智能体运行时产物（报告/快照/审计日志，可随时重新生成）
+qc_daily_data/
+qc_source.db
