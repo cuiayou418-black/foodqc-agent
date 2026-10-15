@@ -1,0 +1,128 @@
+[
+  {
+    "file": "GB14881-2025dz.pdf",
+    "pages": 26,
+    "chars": 25325,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GB19641-2015.pdf",
+    "pages": 10,
+    "chars": 3504,
+    "garbled": true,
+    "verified_garbled": true
+  },
+  {
+    "file": "GB2716-2018.pdf",
+    "pages": 5,
+    "chars": 1979,
+    "garbled": false,
+    "verified_garbled": true
+  },
+  {
+    "file": "GB2760-2024kw.pdf",
+    "pages": 264,
+    "chars": 255511,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GB2761-2017-kw-1.pdf",
+    "pages": 10,
+    "chars": 4386,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GB2762-2025dz.pdf",
+    "pages": 21,
+    "chars": 11925,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GB2763-2026ckj.pdf",
+    "pages": 442,
+    "chars": 338505,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GB28050-2011.pdf",
+    "pages": 28,
+    "chars": 29117,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GB31664-2025dz.pdf",
+    "pages": 3,
+    "chars": 1427,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GB5009.22-2016kw.pdf",
+    "pages": 37,
+    "chars": 29401,
+    "garbled": false,
+    "verified_garbled": true
+  },
+  {
+    "file": "GB5009.227-2023.pdf",
+    "pages": 8,
+    "chars": 5547,
+    "garbled": true,
+    "verified_garbled": true
+  },
+  {
+    "file": "GB5009.229-2025.pdf",
+    "pages": 16,
+    "chars": 11746,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GB5009.257-2016kw.pdf",
+    "pages": 12,
+    "chars": 7883,
+    "garbled": false,
+    "verified_garbled": true
+  },
+  {
+    "file": "GB5009.262-2016kw.pdf",
+    "pages": 7,
+    "chars": 3078,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GB7718-2011.pdf",
+    "pages": 20,
+    "chars": 22822,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GB8955-2016.pdf",
+    "pages": 8,
+    "chars": 4035,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GBT1535-2026.pdf",
+    "pages": 9,
+    "chars": 5382,
+    "garbled": false,
+    "verified_garbled": false
+  },
+  {
+    "file": "GBT5525-2025dz.pdf",
+    "pages": 6,
+    "chars": 3414,
+    "garbled": false,
+    "verified_garbled": false
+  }
+]

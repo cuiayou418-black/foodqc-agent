@@ -25,7 +25,7 @@ for fname in pdf_files:
         total_text += page.get_text()     # 把每页能选中的文字拼起来
     # doc.close()  # 可选：用完关掉，规范写法
 
-    page_count = ???                      # TODO①：这一份有几页？（提示：len(doc)）
+    page_count = len(doc)
     char_count = len(total_text)          # 抽出来的总字符数
 
     # TODO②：判断是否"疑似乱码"（这是真正考你的地方，自己写条件）
@@ -34,7 +34,9 @@ for fname in pdf_files:
     #   2) 如果"页数 > 5 但中文字占比 < 10%"，就标记为乱码
     #   3) 想想：占比怎么算？中文字数 / 总字符数
     chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", total_text))
-    is_garbled = ???                      # TODO②：填你的判断条件（True / False）
+    # 防除零：某 PDF 一个字都抽不出时 char_count=0，直接除会崩。0 字必属乱码，所以给 ratio 兜底 0
+    ratio = chinese_chars / char_count if char_count > 0 else 0
+    is_garbled = page_count > 5 and ratio < 0.1          # TODO②：判断条件（页数多 且 中文字占比低 → 疑似乱码）
 
     # 第三步：打印一行结果，肉眼检查
     print(f"{fname} | 页数:{page_count} | 字符:{char_count} | 乱码:{is_garbled}")
