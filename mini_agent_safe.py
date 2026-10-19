@@ -1,10 +1,11 @@
 import os, json
 from openai import OpenAI
+from judge_tool import judge
 from dotenv import load_dotenv
 load_dotenv()
 client = OpenAI(api_key=os.getenv("DEEPSEEK_API_KEY"), base_url="https://api.deepseek.com")
 
-SYSTEM = ("你是一名食用油质检助手。需要计算时必须调用工具，严禁自行心算或估算数值。"
+SYSTEM = ("你是一名米粮质检助手。需要计算时必须调用工具，严禁自行心算或估算数值。"
           "若工具返回错误，请根据错误提示中列出的'可用工具'修正后重试；"
           "仅在重试后仍无法取得结果时，才回答'无法给出结论，请人工复核'。"
           "任何情况下都不得用自行推算的数值代替工具结果。")
@@ -16,7 +17,7 @@ def calc(expression):
         return f"错误:{e}"
 
 # ① 所有工具集中登记在这一个字典里（这就是"工具箱"）
-TOOLS_IMPL = {"calc": calc}
+TOOLS_IMPL = {"calc": calc, "judge": judge}
 
 tools = [{
     "type": "function",
@@ -26,11 +27,28 @@ tools = [{
         "parameters": {"type": "object",
             "properties": {"expression": {"type": "string"}}, "required": ["expression"]}
     },
-}]
+},
+ {
+     "type": "function",
+     "function": {
+         "name": "judge",
+         "description": "判定实测值是否达标,凡涉及合格、达标或超标的判断必须调用本工具，严禁自行比较大小",
+         "parameters": {
+             "type": "object",
+             "properties": {
+                 "value":      {"type": "number", "description": "实测值"},
+                 "limit_expr": {"type": "string", "description": "限值原文，如 ≥77.0 或 ≤1.0"}
+             },
+             "required": ["value", "limit_expr"]
+         }
+     },
+ }]
+
+
 
 messages = [
     {"role": "system", "content": SYSTEM},
-    {"role": "user", "content": "过氧化值上限0.25, 实测0.15, 占上限百分比多少?"},
+    {"role": "user", "content": "稻谷出糙率实测 76.5%，二等品要求 ≥77.0%，这批合格吗？"},
 ]
 
 MAX_STEPS = 5                   # ② 步数上限, 最多转 5 圈，防死循环烧钱
