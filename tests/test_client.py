@@ -29,6 +29,28 @@ class TestClient(unittest.TestCase):
         self.assertNotIn("品控日报智能体", html, "不能复用日报的品牌外壳")
         self.assertNotIn("日报列表", html, "不能带日报导航")
 
+    def test_page_has_conversation_management(self):
+        """新建/切换/删除/刷新恢复：会话管理是客户端基本形态。"""
+        html = self.client.get("/app").get_data(as_text=True)
+        for marker in ("new-conv", "conv-list", "conv-title", "foodqc.sessions.v1",
+                       "function newSession", "function delSession", "loadStore()",
+                       "wcards", "welcome", "kb-toggle", "CARDS.forEach", "新建任务"):
+            self.assertIn(marker, html, marker)
+        self.assertNotIn("本次演示会话", html, "不能再是单个静态会话")
+
+    def test_page_dsh_style_shell(self):
+        """DSH 风格骨架：薄荷左栏分组、中央欢迎卡、底部浮动输入区。"""
+        html = self.client.get("/app").get_data(as_text=True)
+        for marker in ("side-scroll", "group", "wtitle", "wcard", "cbox",
+                       "cbar", "ctools", "default-workspace", "探索未至之境"):
+            self.assertIn(marker, html, marker)
+
+    def test_backend_is_stateless_across_conversations(self):
+        """会话只在前端，后端每次判定独立运行，互不串味。"""
+        for q in ("你能干什么", "DEMO-001 这批稻谷出糙率 76.5 能收吗", "你好"):
+            d = self.client.post("/api/client/chat", json={"question": q}).get_json()
+            self.assertTrue(d["ok"], q)
+
     def test_knowledge_api(self):
         r = self.client.get("/api/client/knowledge")
         self.assertEqual(r.status_code, 200)
