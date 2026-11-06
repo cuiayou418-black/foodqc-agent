@@ -254,6 +254,10 @@ def create_app(config: QCDailyConfig, with_scheduler: bool = False) -> Flask:
     from .knowledge_web import bp as knowledge_bp
     app.register_blueprint(knowledge_bp)
 
+    # 独立对话客户端 /app：自包含页面，不复用日报的 page() 外壳
+    from .client_ui import client_bp
+    app.register_blueprint(client_bp)
+
     runner = JobRunner(config)
     import_runner = ImportJobRunner(config)
     token = config.web.get("token") or env(config.web.get("token_env", "QC_WEB_TOKEN"))
