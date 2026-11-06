@@ -171,6 +171,7 @@ textarea:focus{outline:none;border-color:var(--brand)}
 </div>
 <script>
 var CHIPS=[
+ "你能干什么",
  "DEMO-001 这批稻谷出糙率 76.5 能收吗",
  "DEMO-002 水分含量 1.45 有没有敲错",
  "DEMO-003 整精米率 80 比出糙率 72 还高，可疑吗",
@@ -195,7 +196,23 @@ function tri(title,cls,arr){
  var lis=(arr||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('')||'<li>（无）</li>';
  return '<div class="'+cls+'"><b>'+title+'</b><ul>'+lis+'</ul></div>';
 }
+function addChat(a){
+ var lines=(a.lines||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('');
+ var bd=(a.boundary||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('');
+ var ex=(a.examples||[]).map(function(x){return '<button class="chip" data-q="'+esc(x)+'">'+esc(x)+'</button>';}).join('');
+ var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+
+  '<div class="h3" style="font-size:14px;margin:0 0 9px">'+esc(a.title)+'</div>'+
+  '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7">'+lines+'</ul>'+
+  (bd?'<div class="disclaim" style="margin-top:11px"><ul style="margin:0;padding-left:16px">'+bd+'</ul></div>':'')+
+  (ex?'<div class="h3">试试这样问</div><div class="chips" style="margin:0">'+ex+'</div>':'')+
+ '</div></div>';
+ var e=el('empty');if(e)e.remove();
+ var t=document.createElement('template');t.innerHTML=h;
+ t.content.querySelectorAll('[data-q]').forEach(function(b){b.onclick=function(){send(b.dataset.q);};});
+ el('msgs').appendChild(t.content);scrollDown();
+}
 function addAgent(d){
+ if(d.mode==='chat'){addChat(d.answer||{});return;}
  var ev=(d.trace_events||[]).map(function(x){
    return '<div class="ev"><span class="nm">'+esc(x.tool)+' ('+esc(JSON.stringify(x.args||{}))+')</span>'+
           '<span class="rs">'+esc(x.result_brief||'')+'</span></div>';
@@ -320,6 +337,28 @@ def client_chat():
     if len(question) > 300:
         return jsonify({"ok": False, "error": "问题请控制在 300 字以内"}), 400
 
+    # 入口理解层：先试可选 LLM 意图识别（只出白名单意图+检索词，不产数字/结论），
+    # 没 key / 未开 / 超时 / 异常一律静默退回规则路由。判定请求才进 harness。
+    from . import intent
+    action, payload = intent.llm_route(question)
+    used_llm = action != "fallback"
+    if action == "fallback":
+        routed = intent.route(question)
+        payload = {"answer": routed["answer"]} if routed else None
+    elif action == "judge":
+        payload = None
+    if payload is not None:
+        return jsonify({
+            "ok": True, "mode": "chat", "question": question,
+            "answer": payload["answer"],
+            "router": "llm" if used_llm else "rules",
+            "batch_id": "", "stop_reason": "chat_route", "steps": 0,
+            "tools_called": [], "llm_used": used_llm,
+            "data_scope": "入口理解层（未进入判定链）",
+            "sections": {}, "trace_events": [],
+            "trace_path": "", "summary_path": "", "report_path": "",
+        })
+
     sink = io.StringIO()
     try:
         with _HARNESS_LOCK:
@@ -338,6 +377,7 @@ def client_chat():
     trace_path = result.get("trace_path", "")
     return jsonify({
         "ok": True,
+        "mode": "run",
         "question": question,
         "batch_id": result.get("batch_id", ""),
         "stop_reason": result.get("stop_reason", ""),

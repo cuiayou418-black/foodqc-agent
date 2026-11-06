@@ -69,5 +69,79 @@ class TestClient(unittest.TestCase):
             self.assertEqual(self.client.get(path).status_code, 200, path)
 
 
+class TestIntentRouter(unittest.TestCase):
+    """入口理解层：先听得懂问题，再决定要不要进判定链。"""
+
+    def setUp(self):
+        from qc_daily import intent
+        self.intent = intent
+
+    def test_capability_question_is_understood(self):
+        r = self.intent.route("你能干什么")
+        self.assertIsNotNone(r)
+        text = " ".join(r["answer"]["lines"])
+        self.assertIn("出糙率", text)
+        self.assertIn("整精米率", text)
+        self.assertIn("不放行", " ".join(r["answer"]["boundary"]))
+
+    def test_idle_chat_is_out_of_scope_not_rejected(self):
+        r = self.intent.route("讲个笑话")
+        self.assertIsNotNone(r)
+        self.assertIn("不在我的业务范围", r["answer"]["title"])
+
+    def test_judgement_request_goes_to_harness(self):
+        self.assertIsNone(self.intent.route("DEMO-001 这批稻谷出糙率 76.5 能收吗"))
+        self.assertIsNone(self.intent.route("出糙率 3 等限值是多少"))
+
+    def test_knowledge_question_has_source(self):
+        r = self.intent.route("整精米率和出糙率有什么区别")
+        self.assertIsNotNone(r)
+        body = " ".join(r["answer"]["lines"] + r["answer"]["boundary"])
+        self.assertTrue(("出处" in body) or ("corpus" in body) or ("未覆盖" in r["answer"]["title"]),
+                        "知识问答必须带出处或明确说明未覆盖")
+
+    def test_open_ended_business_question_asks_for_info(self):
+        """开放式问法不能回「语料未覆盖」——要听懂意图并追问。"""
+        r = self.intent.route("帮我看一下这批粮怎么样")
+        self.assertIsNotNone(r)
+        self.assertIn("还差一点信息", r["answer"]["title"])
+        self.assertNotIn("未覆盖", r["answer"]["title"])
+
+    def test_greeting_is_answered(self):
+        r = self.intent.route("你好")
+        self.assertIsNotNone(r)
+        self.assertIn("FoodQC-Agent", r["answer"]["title"])
+
+    def test_llm_layer_offline_fallback(self):
+        """QC_USE_LLM 默认关：绝不能因为没 key 就卡住对话。"""
+        import os
+        old = os.environ.pop("QC_USE_LLM", None)
+        try:
+            self.assertEqual(self.intent.llm_route("你能干什么")[0], "fallback")
+        finally:
+            if old is not None:
+                os.environ["QC_USE_LLM"] = old
+
+    def test_chat_api_capability_not_rejected(self):
+        from qc_daily.config import QCDailyConfig
+        from qc_daily.webapp import create_app
+        c = create_app(QCDailyConfig.load()).test_client()
+        d = c.post("/api/client/chat", json={"question": "你能干什么"}).get_json()
+        self.assertTrue(d["ok"])
+        self.assertEqual(d["mode"], "chat")
+        self.assertNotEqual(d["stop_reason"], "rejected")
+        self.assertIn("出糙率", " ".join(d["answer"]["lines"]))
+
+    def test_chat_api_judgement_still_runs_harness(self):
+        from qc_daily.config import QCDailyConfig
+        from qc_daily.webapp import create_app
+        c = create_app(QCDailyConfig.load()).test_client()
+        d = c.post("/api/client/chat",
+                   json={"question": "DEMO-001 这批稻谷出糙率 76.5 能收吗"}).get_json()
+        self.assertTrue(d["ok"])
+        self.assertEqual(d["mode"], "run")
+        self.assertIn("待人工复核", d["sections"])
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
