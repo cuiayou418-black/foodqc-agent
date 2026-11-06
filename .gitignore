@@ -17,3 +17,10 @@ tools/
 # 品控日报智能体运行时产物（报告/快照/审计日志，可随时重新生成）
 qc_daily_data/
 qc_source.db
+
+# 知识库上传待核对区：原始文件 + 索引一律不进公开仓库
+# ⚠️ corpus/_inbox/private/ 放公司内部材料（化验室手册等），禁止外传、禁止 push
+corpus/_inbox/
+
+# harness 运行留痕：trace / summary / report 可能含批次号与实测值，不进公开仓库
+runs/

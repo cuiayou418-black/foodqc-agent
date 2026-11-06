@@ -53,7 +53,8 @@ ALIASES: dict[str, list[str]] = {
     "tested_at":   ["检验日期", "检测日期", "检验时间", "检测时间", "tested", "tested_at",
                     "test_date", "检验日期时间"],
     "inspector":   ["检验员", "检测人", "检测员", "inspector", "tester"],
-    "lab":         ["实验室", "检测机构", "检测单位", "lab", "laboratory"],
+    "lab":         ["实验室", "检测机构", "检测单位", "班组", "检验班组", "班组名",
+                    "lab", "laboratory"],
     "limit_source": ["限值出处", "出处", "limit_source"],
     # 仓储
     "warehouse":   ["仓库", "库房", "库区", "warehouse", "store", "storage"],
@@ -275,12 +276,20 @@ def detect_type(sheet_name: str, mapping: dict) -> Optional[str]:
 
 
 def item_spec(config: QCDailyConfig, product: str, item: str) -> dict:
-    """从配置取该产品该项目的限值/单位/方向/标准/出处。"""
+    """从配置取该产品该项目的限值/单位/方向/标准/出处。
+
+    ★ 版本门禁：当前执行版限值未人工核对时，products 里的 GB 1350—2025 数值只是预置副本，
+    禁止用它补齐导入数据 —— 否则就是「按新版判旧货」。此时只返回单位/方向/出处等元数据，
+    limit 留空，由人工核对后回填。
+    """
     for pname, spec in config.products.items():
         if pname == product or pname in product or product in pname:
             items = spec.get("items", {})
             if item in items:
-                return items[item]
+                found = dict(items[item])
+                if not config.active_limits_verified:
+                    found.pop("limit", None)
+                return found
     return {}
 
 
@@ -363,8 +372,10 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
             if not row.get("limit_source"):
                 row["limit_source"] = spec.get("limit_source", "")
             if row.get("limit_value") is None:
-                notes.append(f"⚠️ {row.get('batch_id')}×{row.get('item')} 未找到限值"
-                             f"（请把该产品/项目加进 qc_daily_config.json 的 products）")
+                reason = (f"当前执行版 {config.standard_version} 限值待人工核对，禁止用 2025 预置值补齐"
+                          if not config.active_limits_verified else
+                          "请把该产品/项目加进 qc_daily_config.json 的 products")
+                notes.append(f"⚠️ {row.get('batch_id')}×{row.get('item')} 未取到限值（{reason}）")
         if not row.get("batch_id"):
             continue
         rows.append(row)

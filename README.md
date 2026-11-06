@@ -1,6 +1,8 @@
-# FoodQC-Agent · 食用油中控质检辅助智能体
+# FoodQC-Agent · 米粮（稻谷验收）质检辅助智能体
 
-> 毕业设计项目 —— 基于领域知识图谱与大语言模型的食用油中控质检辅助智能体
+> **标准版本状态**：当前执行 **GB 1350—2009**（限值待人工核对，所有判定结论仅供复核、不得作为放行依据）；GB 1350—2025 为 2027-01-01 才实施的预置版本，未启用。
+>
+> 毕业设计项目 —— 基于领域知识图谱与大语言模型的米粮（稻谷验收）质检辅助智能体
 > 切入场景：**酸价 / 过氧化值异常的判读与根因溯源**
 >
 > **当前进度**：W2 Day 12 已完成（2026-10-14）｜成熟度 **L3 知识库驱动**
@@ -138,6 +140,8 @@ foodqc-agent/
 │   ├── webapp.py           #   Flask Web 应用（仪表盘/日报/生成/审计）
 │   ├── webtemplates.py     #   Web 界面模板（内联 CSS，无 CDN 依赖）
 │   ├── importer.py         #   数据导入：Excel/CSV → SQLite（中文表头自动映射）
+│   ├── validate.py         #   录入错误自查：五类规则只标「待人工确认」，不判合格
+│   ├── limits_resolver.py  #   稻谷限值解析：只读 corpus/limits.json，统一 resolve_limit()
 │   └── cli.py              #   命令行入口（run/daemon/backfill/selftest/show/verify/web/import）
 ├── qc_daily_config.json    # W3   日报智能体配置（限值与 corpus/limits.json 同源）
 ├── corpus/                 # ★Day10 国标语料库（11 个文件 / 18 份国标）
@@ -150,6 +154,7 @@ foodqc-agent/
 │   ├── GB5009.22_黄曲霉毒素测定.md
 │   └── 感官与溶剂残留_GB5525与GB5009.262.md
 ├── qc_daily_data/          # W3   运行时产物（报告/快照/审计日志，已 gitignore）
+├── tests/                  # 回归测试（test_validate.py：6 条，可直接运行，无需 pytest）
 ├── docs/                   # 15 张实测证据截图 + 对比图 + 证据索引
 └── notes/                  # 学习笔记（W1 / W2 原理 / 模板）
 ```
@@ -183,6 +188,28 @@ foodqc-agent/
 | **生成及时** | `DailyScheduler` 每天 07:30 自动生成昨日日报；`catch_up` 启动时自动补齐遗漏日期；任何一步失败不中断已产出部分（status=partial） |
 | **可追溯** | ① 原始快照全量落盘（只写一次）② JSONL 只追加审计日志（运行全要素）③ 报告 SHA-256 指纹内嵌，`verify` 命令可验真 |
 | **只读源数据** | 所有产物都是新增文件，绝不修改任何原始记录 |
+
+### 录入错误自查：先确认数是不是真的，再判合不合格
+
+化验室表里已有公式判「合不合格」，但判不了「这个数是不是敲错了」。
+`qc_daily/validate.py` 是公式**前面**的另一道关，采集后自动执行：
+
+| 规则 | 查什么 | 命中口径 |
+|---|---|---|
+| ① 值域 | 百分类指标 | `< 0` 或 `> 100` 直接标疑 |
+| ② 量级跳变 | 同项目相邻批次 | 两数相差 ≥ 10 倍（`14.5 → 145`、`14.5 → 1.45` 都抓） |
+| ③ 小数位异常 | 同项目历史中位数 | 整整差一个数量级（约 10 倍，历史需 ≥ 3 条） |
+| ④ 跨列逻辑 | 同批次两列 | 「整精米率 > 出糙率」业务上不可能 |
+| ⑤ 重复 / 漏填 | 同批次同项目 | 出现两行，或批次号 / 检测项目 / 实测值为空 |
+
+> **铁律**：这一层只输出「待人工确认」，**不修改任何数值、不改写 `verdict`、
+> 不自动放行、不自动判不合格**。安全指标（镉、无机砷、黄曲霉毒素等 ≤ 上限型）
+> 数值读不出来或符号不规整时，一律「无法判定，转人工」，不许猜、不许剥掉
+> `<` / `≤` 硬凑数字。疑点汇总在 HTML 报告「⚠️ 待人工复核」区块（排在合格率之前），
+> 无疑点时显示「今日无录入疑点」。
+
+回归：`python tests/test_validate.py`（6 条，无需安装 pytest）；
+装了 pytest 也可 `python -m pytest tests/test_validate.py -q`。
 
 ### 快速开始
 
@@ -363,3 +390,49 @@ python mini_agent_safe.py       #    加固版 Agent（Day8）
 - `.env`（含 API Key）、`.venv/`、`__pycache__/` 已在 `.gitignore` 中，**不会进入版本库**；克隆后需自行配置 `.env`。
 - **质检场景定位**：Agent 仅作辅助查证，**最终放行权归代码与人工** —— 这是本项目区别于普通 AI 问答类毕设的关键设计。
 - **语料来源**：均为公开发布的国家标准，限值经原文逐格核对与多平台交叉验证，**不含任何企业内控数据或实习数据**。
+
+---
+
+## 今晚完成的事（2026-11-06）
+
+- **P1 配置切换**：`qc_daily_config.json` 从食用油改成米粮/稻谷验收；新增 `standard_version = GB 1350—2009`（2009 限值待人工核对，2025 版只作预置）。限值一律经 `qc_daily/limits_resolver.py::resolve_limit()` 从 `corpus/limits.json` 只读解析，报告顶部与控制台都打版本警告。
+- **P2 录入自查**：新增 `qc_daily/validate.py`，五类规则只标「待人工确认」，不改数值、不改写 verdict、不自动放行；HTML 报告合格率之前新增「⚠️ 待人工复核」区块。`tests/test_validate.py` 6 条回归全绿。
+- **P3 问答与 harness**：`qc_daily/qa.py` 是「问一句、系统自己选工具」的入口；`qc_daily/harness.py` 是它外面的可审计壳（4 个工具、上下文三样装配、代码硬闸门、`runs/<batch_id>/trace.jsonl` 留痕、三段式输出）。`qa.run_qa()` 的输出格式保持不变，Web 工作台 `/api/agent/ask` 仍按原前缀解析。
+- **假数据跑通全链**：`samples/稻谷验收_假数据.csv`（10 行 / 3 个 DEMO 批次 / 故意混入 4 类录入错误），补齐 `班组` 中文表头别名；HTML 补上逐条结论的标准号、条款出处与末尾人工签字字样。大白话流程见 [HOW_IT_WORKS.md](HOW_IT_WORKS.md)。
+- **回归**：`selftest` 7/7、`test_knowledge.py` 12/12、`test_validate.py` 6/6、`config-check` 通过、`verify` 指纹校验通过。
+
+### 今晚的命令清单（怎么跑）
+
+```bash
+# 0. 配置自检
+.venv/Scripts/python.exe -m qc_daily config-check
+
+# 1. 端到端自测（模拟数据源，7 项断言）
+.venv/Scripts/python.exe -m qc_daily selftest
+
+# 2. 导入自己的表：先看映射（不写库），确认后再正式导入
+.venv/Scripts/python.exe -m qc_daily import --file samples/稻谷验收_假数据.csv --dry-run
+.venv/Scripts/python.exe -m qc_daily import --file samples/稻谷验收_假数据.csv
+
+# 3. 出日报（--no-push 不开真实推送；formats 可加 pdf）
+.venv/Scripts/python.exe -m qc_daily run --no-push --formats html,excel
+
+# 4. 校验报告指纹（--date 必填，填导入数据覆盖的日期）
+.venv/Scripts/python.exe -m qc_daily verify --date 2026-11-05
+
+# 5. 一句话问答 / 可审计 harness（同一入口）
+.venv/Scripts/python.exe -m qc_daily ask "DEMO-001 这批稻谷出糙率 76.5 能收吗"
+
+# 6. 回归测试
+.venv/Scripts/python.exe tests/test_validate.py
+.venv/Scripts/python.exe -m unittest discover -s tests -p "test_knowledge.py" -v
+```
+
+### 怎么换成真表
+
+1. 把 `--file` 指向真实 Excel/CSV，**先加 `--dry-run`** 核对表头映射；认不出的中文列名在 `qc_daily/importer.py` 的 `ALIASES` 末尾追加，别删原有英文别名。
+2. 真表里的产品/项目要能在 `qc_daily_config.json` 的 `products` 里找到；限值不要手抄，走 `corpus/limits.json`（`limits_resolver.py` 已接好）。
+3. **先核对 GB 1350—2009 的限值**：核对完成前 `standard_versions[...].limits_verified` 保持 `false`，所有判定结论只供复核，不得作为放行依据；别把 2025 预置值当成当前执行版。
+4. `push.email.enabled` / `push.webhook.enabled` 保持 `false`，`dry_run` 保持 `true`；要发真实邮件/企微必须由负责人确认并单独改配置。
+5. 真实数据只放在本地数据源里：`qc_source.db`、`qc_daily_data/`、`runs/` 都已在 `.gitignore` 中；**不要把真实批次号或实测值写进 `samples/` 之外的仓库文件**。
+6. 换完表按顺序重跑 `config-check` → `import --dry-run` → `import` → `run` → `verify`。

@@ -30,8 +30,8 @@ def env(name: str, default: str = "") -> str:
 
 DEFAULT_CONFIG: dict = {
     "report": {
-        "title": "食用油中控品控日报",
-        "plant": "第一油脂工厂",
+        "title": "米粮品控日报（稻谷验收）",
+        "plant": "示例米厂（占位，非真实厂名）",
         # previous_day: 每天生成"昨天"的日报（推荐，数据已收口）；same_day: 生成当天
         "report_for": "previous_day",
         "timezone_offset": 8,
@@ -205,6 +205,26 @@ class QCDailyConfig:
     def schedule(self) -> dict:
         return self.raw["schedule"]
 
+    @property
+    def standard_version(self) -> str:
+        """当前执行的标准版本（唯一开关，不允许与预置版本混用）。"""
+        return self.raw.get("standard_version", "")
+
+    @property
+    def standard_versions(self) -> dict:
+        return self.raw.get("standard_versions", {})
+
+    @property
+    def standard_warning(self) -> str:
+        """版本状态警告文案：报告顶部与控制台都要打印。"""
+        return self.raw.get("standard_warning", "")
+
+    @property
+    def active_limits_verified(self) -> bool:
+        """当前执行版限值是否已人工核对并落位；False = 结论仅供复核，不得放行。"""
+        v = self.standard_versions.get(self.standard_version, {})
+        return bool(v.get("limits_verified")) and v.get("limits") is not None
+
     # ---------- 派生值 ----------
     @property
     def output_root(self) -> str:
@@ -236,14 +256,23 @@ class QCDailyConfig:
                 issues.append(f"预警规则 [{rule.get('id')}] 运算符非法: {rule.get('op')!r}")
         if self.report.get("report_for") not in ("previous_day", "same_day"):
             issues.append(f"report.report_for 非法: {self.report.get('report_for')!r}")
+        version = self.standard_version
+        if version and version not in self.standard_versions:
+            issues.append(f"standard_version [{version}] 未在 standard_versions 登记（禁止使用未登记版本判定）")
         return issues
 
 
 def _deep_merge(base: dict, override: dict) -> dict:
-    """递归合并：override 覆盖 base，未提供的键保留默认值。"""
+    """递归合并：override 覆盖 base，未提供的键保留默认值。
+
+    products 是唯一例外：整体替换而非深合并。否则内置默认产品会渗进用户配置，
+    造成食用油限值与米粮配置并存（两套标准混用），无法用开关隔离。
+    """
     out = dict(base)
     for k, v in override.items():
-        if k in out and isinstance(out[k], dict) and isinstance(v, dict):
+        if k == "products":
+            out[k] = v
+        elif k in out and isinstance(out[k], dict) and isinstance(v, dict):
             out[k] = _deep_merge(out[k], v)
         else:
             out[k] = v

@@ -8,6 +8,8 @@
 """
 from __future__ import annotations
 
+from html import escape
+
 from .models import DailyMetrics
 
 _CSS = """
@@ -90,7 +92,9 @@ def _bar(name: str, value: float, max_value: float, label: str, cls: str = "") -
 
 
 def render_html(m: DailyMetrics, meta: dict) -> str:
-    """渲染日报 HTML。meta 需含 run_id / fingerprint / source_type / audit_path / provenance / errors。"""
+    """渲染日报 HTML。meta 需含 run_id / fingerprint / source_type / audit_path /
+    provenance / errors；可选 suspects（录入自查疑点，见 validate.validate_records）。
+    """
     parts: list[str] = []
     add = parts.append
 
@@ -101,11 +105,16 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
 
     # ---------- 报告头 ----------
     add("<header class='report-head'>")
-    add(f"<h1>{meta.get('title', '食用油中控品控日报')}</h1>")
+    add(f"<h1>{meta.get('title', '米粮品控日报（稻谷验收）')}</h1>")
     add(f"<div class='sub'>报告日期：<b>{m.report_date}</b>　|　生产基地：{m.plant}　|　"
         f"生成时间：{m.generated_at}　|　数据来源：{meta.get('source_type', '')}　|　"
         f"运行编号：<code>{meta.get('run_id', '')}</code></div>")
     add("</header>")
+
+    # ---------- 标准版本警告（报告顶部置顶，未核对时不可跳过） ----------
+    banner = meta.get("warning_banner", "")
+    if banner:
+        add(f"<div class='notice error'>{banner}</div>")
 
     # ---------- 数据校验提示（若有 error 级问题，整份报告带显著警示） ----------
     errors = [v for v in m.validation_issues if v.level == "error"]
@@ -142,6 +151,28 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
         f"<div class='value'>{len(m.alerts)}</div>"
         f"<div class='hint'>严重 {crit} · 警告 {warn} · 提示 {info}</div></div>")
     add("</div>")
+
+    # ---------- ⚠️ 待人工复核（录入错误自查，必须排在合格率之前） ----------
+    # 这一层只回答「数是不是敲错了」，不回答「合不合格」；
+    # 与后面的合格率是前后两道关：先人工确认数据，再看判定结果。
+    suspects = meta.get("suspects") or []
+    add("<h2>⚠️ 待人工复核</h2>")
+    if suspects:
+        add(f"<div class='notice'>共发现 {len(suspects)} 条录入疑点，全部标为「待人工确认」。"
+            f"本区块不修改任何数值、不改写合格判定、不自动放行；"
+            f"请先人工核对原始检验记录，再看下面的合格率。</div>")
+        add("<table><tr><th>批次号</th><th>检测项目</th><th>实测值</th>"
+            "<th>疑点（大白话）</th><th>建议动作</th></tr>")
+        for s in suspects:
+            add(f"<tr class='warn'><td>{escape(str(s.get('batch_id', '')))}</td>"
+                f"<td>{escape(str(s.get('item', '')))}</td>"
+                f"<td class='num'>{escape(str(s.get('value', '')))}</td>"
+                f"<td>{escape(str(s.get('reason', '')))}</td>"
+                f"<td>{escape(str(s.get('建议动作', '')))}</td></tr>")
+        add("</table>")
+    else:
+        add("<div class='notice'>今日无录入疑点（已自查值域 / 相邻批次量级跳变 / "
+            "小数位 / 跨列逻辑 / 重复与漏填）。</div>")
 
     # ---------- 一、合格率分析 ----------
     add("<h2>一、合格率分析</h2>")
@@ -267,6 +298,28 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
         "未经过模型推算；每个数字均可通过上方指纹与记录号回溯至原始系统记录。"
         "本报告仅作过程监控参考，放行决策以人工复核与检验报告为准。</p>")
     add("</div>")
+
+    # ---------- 附：质检明细（逐条结论的标准号与条款出处） ----------
+    qc_details = meta.get("qc_details") or []
+    if qc_details:
+        add("<h2>附：质检明细（逐条结论与依据）</h2>")
+        add("<table><tr><th>批次号</th><th>检测项目</th><th class='num'>实测值</th>"
+            "<th>方向</th><th class='num'>限值</th><th>判定</th>"
+            "<th>标准号</th><th>条款出处</th></tr>")
+        for r in qc_details:
+            cls = " class='fail'" if r.get("verdict") == "不合格" else ""
+            add(f"<tr{cls}><td><code>{escape(str(r.get('batch_id', '')))}</code></td>"
+                f"<td>{escape(str(r.get('item', '')))}</td>"
+                f"<td class='num'>{escape(str(r.get('value', '')))}</td>"
+                f"<td>{escape(str(r.get('direction', '')))}</td>"
+                f"<td class='num'>{escape(str(r.get('limit_value', '')))}</td>"
+                f"<td>{escape(str(r.get('verdict', '')))}</td>"
+                f"<td>{escape(str(r.get('standard', '')))}</td>"
+                f"<td>{escape(str(r.get('limit_source', '')))}</td></tr>")
+        add("</table>")
+
+    add("<div class='notice error' style='margin-top:14px'>"
+        "本结论仅供复核，最终由人签字放行；系统不改数值、不自动判合格、不替代人工签字。</div>")
 
     # ---------- 页脚 ----------
     add(f"<footer class='report-foot'><span>{meta.get('title', '食用油中控品控日报')} · "

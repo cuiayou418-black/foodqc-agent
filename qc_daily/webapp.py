@@ -250,6 +250,10 @@ def create_app(config: QCDailyConfig, with_scheduler: bool = False) -> Flask:
     app.config["MAX_CONTENT_LENGTH"] = MAX_UPLOAD_BYTES
     app.secret_key = os.urandom(24)
 
+    # 知识库（Agent 设置 › 记忆） + Agent 工作台：Blueprint 挂载，现有业务路由零改动
+    from .knowledge_web import bp as knowledge_bp
+    app.register_blueprint(knowledge_bp)
+
     runner = JobRunner(config)
     import_runner = ImportJobRunner(config)
     token = config.web.get("token") or env(config.web.get("token_env", "QC_WEB_TOKEN"))

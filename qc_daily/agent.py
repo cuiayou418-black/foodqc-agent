@@ -24,6 +24,7 @@ from .console import say
 from .exporters import export_excel, export_pdf
 from .models import Alert, DailyMetrics, RunResult, fingerprint, iso_now
 from .templates import render_html
+from .validate import validate_records
 
 _STEP = lambda tag, msg: say(f"[{tag}] {msg}")
 
@@ -61,6 +62,8 @@ class QCDailyAgent:
             or self.config.push.get("webhook", {}).get("enabled", False)
 
         _STEP("启动", f"运行编号 {run_id} ｜ 报告日期 {target} ｜ 数据源 {self.config.source.get('type')}")
+        if self.config.standard_warning and not self.config.active_limits_verified:
+            say(self.config.standard_warning)
         result = RunResult(run_id=run_id, status="failed", report_date=target.isoformat(),
                            started_at=started)
         errors: list[str] = []
@@ -71,6 +74,7 @@ class QCDailyAgent:
         metrics: DailyMetrics | None = None
         alerts: list[Alert] = []
         deliveries: list = []
+        suspects: list = []
 
         try:
             # ---- 1. 采集 ----
@@ -82,6 +86,10 @@ class QCDailyAgent:
                            "warehouse": len(data.warehouse)}
             _STEP("采集", f"完成：生产 {len(data.production)} 条 ｜ 质检 {len(data.quality)} 条 ｜ "
                           f"仓储 {len(data.warehouse)} 条 ｜ 数据指纹 {data_checksum[:16]}")
+
+            # ---- 1.5 录入错误自查：只读，只标「待人工确认」，不碰数值/verdict ----
+            suspects = validate_records(data.quality)
+            _STEP("自查", f"录入疑点 {len(suspects)} 条（待人工确认，不改数值/判定，不自动放行）")
 
             # ---- 2. 数据校验 ----
             issues = validate_collected(data, self.config)
@@ -137,6 +145,10 @@ class QCDailyAgent:
                     "provenance": [p.to_dict() for p in data.provenance],
                     "warehouse_limits": self.config.warehouse_limits,
                     "output_root": self.output_root,
+                    "warning_banner": (self.config.standard_warning
+                                       if not self.config.active_limits_verified else ""),
+                    "suspects": [s.to_dict() for s in suspects],
+                    "qc_details": [r.to_dict() for r in data.quality],
                 }
 
                 if "html" in formats:

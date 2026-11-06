@@ -1,10 +1,29 @@
 {
   "report": {
-    "title": "食用油中控品控日报",
-    "plant": "第一油脂工厂",
+    "title": "米粮品控日报（稻谷验收）",
+    "plant": "示例米厂（占位，非真实厂名）",
     "report_for": "previous_day",
     "timezone_offset": 8
   },
+  "standard_version": "GB 1350—2009",
+  "standard_versions": {
+    "GB 1350—2009": {
+      "role": "active",
+      "note": "当前（2026 年）执行版；corpus/limits.json 的 GB 1350—2025 明示 2027-01-01 才实施",
+      "limits_verified": false,
+      "limits": null,
+      "limits_status": "pending_manual_verification",
+      "release_allowed": false
+    },
+    "GB 1350—2025": {
+      "role": "preset",
+      "effective_date": "2027-01-01",
+      "limits_source": "corpus/limits.json → GB1350-2025 → 表格 → 表1/表2 → 质量要求",
+      "enabled": false,
+      "note": "预置，未到实施日期；products 中的数值仅为其可追溯副本，不得作为当前放行依据"
+    }
+  },
+  "standard_warning": "⚠️ 当前按 GB 1350—2009 判定，2009 版限值待人工核对；未核对前所有判定结论仅供复核，不得作为放行依据",
   "source": {
     "type": "sql",
     "simulated": {
@@ -33,31 +52,41 @@
     }
   },
   "products": {
-    "一级浸出大豆油": {
+    "籼稻谷": {
+      "table": "表1",
+      "scope": ["早籼稻谷", "中晚籼稻谷", "籼糯稻谷"],
+      "grade": "3",
+      "limits_basis": "GB 1350—2025 预置（corpus/limits.json → GB1350-2025 → 表格 → 表1/表2 → 质量要求），enabled=false；当前执行版以 standard_version 为准，限值待人工核对",
       "items": {
-        "酸价":         {"unit": "mg/g",   "direction": "≤", "limit": 0.5,  "standard": "GB/T 1535—2026", "limit_source": "表4 一级（原文第5页）"},
-        "过氧化值":     {"unit": "g/100g", "direction": "≤", "limit": 0.13, "standard": "GB/T 1535—2026", "limit_source": "表4 一级（原文第5页）"},
-        "水分及挥发物": {"unit": "%",      "direction": "≤", "limit": 0.1,  "standard": "GB/T 1535—2026", "limit_source": "表4 一级（原文第5页）"},
-        "不溶性杂质":   {"unit": "%",      "direction": "≤", "limit": 0.05, "standard": "GB/T 1535—2026", "limit_source": "表4 一级（原文第5页）"},
-        "溶剂残留量":   {"unit": "mg/kg",  "direction": "≤", "limit": 20,   "standard": "GB 2716—2018",   "limit_source": "表2 食用植物油（原文第3页）；GB/T 1535 表4 一级要求'不应检出'"},
-        "烟点":         {"unit": "℃",     "direction": "≥", "limit": 190,  "standard": "GB/T 1535—2026", "limit_source": "表4 一级（原文第5页）"}
-      }
+        "出糙率":       {"unit": "%", "direction": "≥", "limit": 75.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 第3等 原文第5页", "kind": "graded_lower", "expr": "≥75.0", "is_grading_item": true},
+        "整精米率":     {"unit": "%", "direction": "≥", "limit": 44.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 第3等 原文第5页", "kind": "graded_lower", "expr": "≥44.0", "is_grading_item": false},
+        "杂质含量":     {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·杂质含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
+        "水分含量":     {"unit": "%", "direction": "≤", "limit": 13.5, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·水分含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤13.5", "is_grading_item": false},
+        "黄粒米含量":   {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·黄粒米含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
+        "谷外糙米含量": {"unit": "%", "direction": "≤", "limit": 4.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·谷外糙米含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤4.0", "is_grading_item": false},
+        "互混率":       {"unit": "%", "direction": "≤", "limit": 5.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·互混率 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤5.0", "is_grading_item": false}
+      },
+      "manual_checks": [
+        {"item": "色泽、气味", "unit": "", "direction": null, "limit": null, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·色泽、气味 原文第5页（各等级同值）", "requirement": "正常", "note": "人工确认项：感官型指标，不参与数值判定"}
+      ]
     },
-    "浸出大豆原油": {
+    "粳稻谷": {
+      "table": "表2",
+      "scope": ["粳稻谷", "粳糯稻谷"],
+      "grade": "3",
+      "limits_basis": "GB 1350—2025 预置（corpus/limits.json → GB1350-2025 → 表格 → 表1/表2 → 质量要求），enabled=false；当前执行版以 standard_version 为准，限值待人工核对",
       "items": {
-        "酸价":         {"unit": "mg/g",   "direction": "≤", "limit": 4.0,  "standard": "GB/T 1535—2026", "limit_source": "表2 大豆原油（原文第4页）"},
-        "过氧化值":     {"unit": "g/100g", "direction": "≤", "limit": 0.25, "standard": "GB/T 1535—2026", "limit_source": "表2 大豆原油（原文第4页）"},
-        "水分及挥发物": {"unit": "%",      "direction": "≤", "limit": 0.2,  "standard": "GB/T 1535—2026", "limit_source": "表2 大豆原油（原文第4页）"},
-        "不溶性杂质":   {"unit": "%",      "direction": "≤", "limit": 0.2,  "standard": "GB/T 1535—2026", "limit_source": "表2 大豆原油（原文第4页）"},
-        "溶剂残留量":   {"unit": "mg/kg",  "direction": "≤", "limit": 100,  "standard": "GB/T 1535—2026", "limit_source": "表2 浸出法（原文第4页）"}
-      }
-    },
-    "食用植物调和油": {
-      "items": {
-        "酸价":       {"unit": "mg/g",   "direction": "≤", "limit": 3.0, "standard": "GB 2716—2018", "limit_source": "表2 食用植物油（含调和油）（原文第3页）"},
-        "过氧化值":   {"unit": "g/100g", "direction": "≤", "limit": 0.25, "standard": "GB 2716—2018", "limit_source": "表2 食用植物油（含调和油）（原文第3页）"},
-        "溶剂残留量": {"unit": "mg/kg",  "direction": "≤", "limit": 20,  "standard": "GB 2716—2018", "limit_source": "表2 食用植物油（原文第3页）"}
-      }
+        "出糙率":       {"unit": "%", "direction": "≥", "limit": 77.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 第3等 原文第5页+第6页", "kind": "graded_lower", "expr": "≥77.0", "is_grading_item": true},
+        "整精米率":     {"unit": "%", "direction": "≥", "limit": 55.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 第3等 原文第5页+第6页", "kind": "graded_lower", "expr": "≥55.0", "is_grading_item": false},
+        "杂质含量":     {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·杂质含量 原文第5页+第6页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
+        "水分含量":     {"unit": "%", "direction": "≤", "limit": 14.5, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·水分含量 原文第5页+第6页（各等级同值）", "kind": "fixed_upper", "expr": "≤14.5", "is_grading_item": false},
+        "黄粒米含量":   {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·黄粒米含量 原文第5页+第6页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
+        "谷外糙米含量": {"unit": "%", "direction": "≤", "limit": 4.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·谷外糙米含量 原文第5页+第6页（各等级同值）", "kind": "fixed_upper", "expr": "≤4.0", "is_grading_item": false},
+        "互混率":       {"unit": "%", "direction": "≤", "limit": 5.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·互混率 原文第5页+第6页（各等级同值）", "kind": "fixed_upper", "expr": "≤5.0", "is_grading_item": false}
+      },
+      "manual_checks": [
+        {"item": "色泽、气味", "unit": "", "direction": null, "limit": null, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·色泽、气味 原文第5页+第6页（各等级同值）", "requirement": "正常", "note": "人工确认项：感官型指标，不参与数值判定"}
+      ]
     }
   },
   "warehouse_limits": {

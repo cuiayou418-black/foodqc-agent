@@ -11,6 +11,12 @@
     python -m qc_daily verify --date YYYY-MM-DD     # 校验某日 HTML 报告完整性（防篡改）
     python -m qc_daily web [--port 8000] [--scheduler]  # 启动 Web 服务（局域网演示）
     python -m qc_daily import --file 我的数据.xlsx --dry-run  # 导入自己的 Excel/CSV 数据
+    python -m qc_daily ask "这批稻谷为什么判三等"      # 一句话问答（默认纯代码，QC_USE_LLM=1 才启用解释层）
+
+说明：run / daemon / backfill / web 出报时会自动执行「检验记录录入错误自查」
+      （qc_daily/validate.py：只读，只标「待人工确认」，不改数值、不改写 verdict、
+       不自动放行），疑点列在 HTML 报告「⚠️ 待人工复核」区块（排在合格率之前）；
+       自查回归：python tests/test_validate.py（无需 pytest）。
 """
 from __future__ import annotations
 
@@ -131,6 +137,10 @@ def cmd_config_check(args) -> int:
     say(f"数据源: {cfg.source.get('type')} ｜ 导出格式: {cfg.export.get('formats')} ｜ "
           f"调度时间: {cfg.schedule.get('time')}")
     say(f"产品数: {len(cfg.products)} ｜ 预警规则: {len(cfg.alert_rules)} 条")
+    say(f"标准版本: {cfg.standard_version} ｜ 限值已核对: "
+        f"{'是' if cfg.active_limits_verified else '否（配置占位，待人工核对）'}")
+    if cfg.standard_warning and not cfg.active_limits_verified:
+        say(cfg.standard_warning)
     if issues:
         say(f"⛔ 发现 {len(issues)} 个问题：")
         for i in issues:
@@ -186,6 +196,14 @@ def cmd_import(args) -> int:
     return 0 if not summary["errors"] else 1
 
 
+def cmd_ask(args) -> int:
+    """一句话问答：转发到可审计 harness；qa.run_qa 的输出格式保持原样供 Web 工作台解析。"""
+    from .harness import run_harness
+
+    result = run_harness(args.question)
+    return 0 if result.get("ok") else 1
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="qc_daily", description="品控日报自动化智能体")
     parser.add_argument("--config", help="配置文件路径（默认 qc_daily_config.json）")
@@ -237,6 +255,10 @@ def main(argv=None) -> int:
     p.add_argument("--db", help="目标数据库（默认 qc_source.db）")
     p.add_argument("--dry-run", action="store_true", help="只预览表头映射，不写库")
     p.set_defaults(func=cmd_import)
+
+    p = sub.add_parser("ask", parents=[common], help="一句话问答（系统自己选工具，判定权在代码）")
+    p.add_argument("question", help="中文问题，如「这批稻谷为什么判三等」")
+    p.set_defaults(func=cmd_ask)
 
     args = parser.parse_args(argv)
     return args.func(args)
