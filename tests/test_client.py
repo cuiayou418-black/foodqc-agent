@@ -97,6 +97,67 @@ class TestClient(unittest.TestCase):
         self.assertTrue(r.headers["Location"].endswith("/app"))
         self.assertEqual(self.client.get("/agent", follow_redirects=True).status_code, 200)
 
+    # ---- 真控件回归：判定模式 / LLM 开关 / 历史 / 折叠 ----
+
+    def test_page_controls_are_real_not_decorative(self):
+        """外围控件必须真有 id + 后端接口；纯装饰的 span 不能再假装可点。"""
+        html = self.client.get("/app").get_data(as_text=True)
+        for marker in ('id="mode-btn"', 'id="mode-menu"', 'id="llm-btn"',
+                       'id="hist-up"', 'id="hist-down"', 'data-fold="pin"',
+                       'data-fold="proj"', 'data-fold="recent"', "/api/client/state",
+                       "function setMode", "function toggleLlm", "function histPrev"):
+            self.assertIn(marker, html, marker)
+        # 频道 / 定时：明标未开放，不再是无反应的裸 span
+        self.assertNotIn("<span>频道</span>", html)
+        self.assertIn('title="频道功能尚未开放"', html)
+        # DeepSeek 从静态 span 升级为真按钮
+        self.assertNotIn('<span class="model">', html)
+
+    def test_mode_chat_does_not_enter_chain(self):
+        d = self.client.post("/api/client/chat", json={
+            "question": "DEMO-001 这批稻谷出糙率 76.5 能收吗", "mode": "chat"}).get_json()
+        self.assertEqual(d["mode"], "chat")
+        self.assertEqual(d["mode_used"], "chat")
+        self.assertEqual(d["router"], "mode", "问答模式必须挡住判定请求")
+        self.assertEqual(d["batch_id"], "", "问答模式不能进判定链")
+        self.assertIn("问答模式", d["answer"]["title"])
+
+    def test_mode_lookup_only_searches_corpus(self):
+        d = self.client.post("/api/client/chat", json={
+            "question": "出糙率 3 等限值是多少", "mode": "lookup"}).get_json()
+        self.assertEqual(d["mode"], "chat")
+        self.assertEqual(d["mode_used"], "lookup")
+        self.assertFalse(d["batch_id"], "只查标准不进判定链")
+        self.assertTrue(d["answer"]["title"])
+
+    def test_mode_judge_forces_chain(self):
+        d = self.client.post("/api/client/chat", json={
+            "question": "DEMO-001 这批稻谷出糙率 76.5 能收吗", "mode": "judge"}).get_json()
+        self.assertEqual(d["mode"], "run")
+        self.assertEqual(d["mode_used"], "judge")
+        self.assertTrue(d["batch_id"].startswith("DEMO-"))
+        self.assertIn("已确认", d["sections"])
+
+    def test_unknown_mode_degrades_to_auto(self):
+        d = self.client.post("/api/client/chat", json={
+            "question": "DEMO-001 这批稻谷出糙率 76.5 能收吗", "mode": "???"}).get_json()
+        self.assertEqual(d["mode_used"], "auto")
+
+    def test_llm_switch_off_by_request(self):
+        """请求级关闭必须生效，且不能因为开关而联网。"""
+        d = self.client.post("/api/client/chat", json={
+            "question": "整精米率和出糙率有什么区别", "mode": "chat",
+            "use_llm": False}).get_json()
+        self.assertFalse(d["llm_used"], "关了就不能调模型")
+        self.assertEqual(d["llm_state"]["source"], "request")
+
+    def test_state_endpoint_reports_real_llm(self):
+        d = self.client.get("/api/client/state").get_json()
+        self.assertTrue(d["ok"])
+        self.assertIn("enabled", d["llm"])
+        self.assertIn("has_key", d["llm"])
+        self.assertEqual(len(d["modes"]), 4, "自动/判定/问答/只查标准")
+
 
 class TestIntentRouter(unittest.TestCase):
     """入口理解层：先听得懂问题，再决定要不要进判定链。"""

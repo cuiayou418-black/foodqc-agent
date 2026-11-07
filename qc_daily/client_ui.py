@@ -61,9 +61,15 @@ body{background:var(--bg);color:var(--ink);font-family:-apple-system,"Segoe UI",
 .side-link:hover{background:var(--brand-soft);color:var(--brand)}
 .tabs{display:flex;gap:14px;border-bottom:1px solid var(--line);margin:12px 4px 8px;padding-bottom:8px;font-size:12px;color:var(--ink3)}
 .tabs .on{color:var(--brand);font-weight:600;border-bottom:2px solid var(--brand);padding-bottom:6px;margin-bottom:-8px}
+.tabs .off{opacity:.4;cursor:not-allowed}
 .side-scroll{flex:1;overflow-y:auto}
-.group{font-size:11px;color:var(--ink3);margin:12px 8px 6px;display:flex;justify-content:space-between}
+.group{font-size:11px;color:var(--ink3);margin:12px 8px 6px;display:flex;justify-content:space-between;cursor:pointer;user-select:none}
+.group:hover{color:var(--brand)}
+.group .ar{transition:transform .15s;display:inline-block}
+.group.folded .ar{transform:rotate(-90deg)}
+.grp-body.folded{display:none}
 .proj{font-size:12.5px;color:var(--ink2);padding:5px 8px;display:flex;gap:6px}
+.proj .lock{font-size:10px;color:var(--ink3)}
 .conv{display:flex;align-items:center;gap:6px;padding:6px 8px;border-radius:6px;font-size:12.5px;color:var(--ink2);cursor:pointer;margin-bottom:2px}
 .conv:hover{background:var(--brand-soft)}
 .conv.on{background:var(--brand-soft);color:var(--brand)}
@@ -130,14 +136,30 @@ details[open] summary:before{content:"▾ "}
 .trace{margin-top:8px;font-size:11px;color:var(--ink3);font-family:Consolas,monospace}
 .composer{flex:0 0 auto;padding:8px 26px 16px}
 .cbox{max-width:860px;margin:0 auto;border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:10px 14px 9px}
-.cbar{display:flex;align-items:center;gap:14px;font-size:11.5px;color:var(--ink2);padding-bottom:6px}
+.cbar{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--ink2);padding-bottom:6px}
 .cbar .sp{flex:1}
-.cbar .hist{color:var(--ink3)}
+.dd{position:relative;display:inline-block}
+.dd>button{border:0;background:transparent;color:var(--ink2);font-size:11.5px;font-family:inherit;cursor:pointer;padding:2px 5px;border-radius:5px}
+.dd>button:hover{background:var(--brand-soft);color:var(--brand)}
+.ddmenu{position:absolute;bottom:calc(100% + 6px);left:0;min-width:158px;background:var(--panel);border:1px solid var(--line);border-radius:9px;box-shadow:0 10px 26px rgba(0,0,0,.14);padding:5px;z-index:50;display:none}
+.dd.open .ddmenu{display:block}
+.ddmenu button{display:block;width:100%;text-align:left;border:0;background:transparent;color:var(--ink2);font-size:12px;font-family:inherit;padding:6px 9px;border-radius:6px;cursor:pointer}
+.ddmenu button:hover{background:var(--brand-soft);color:var(--brand)}
+.ddmenu button.on{color:var(--brand);font-weight:600}
+.ddmenu .note{font-size:10.5px;color:var(--ink3);padding:3px 9px 6px;line-height:1.45}
+.hist-btn{border:1px solid var(--line);background:transparent;color:var(--ink3);font-size:10.5px;border-radius:10px;padding:1px 7px;cursor:pointer;font-family:inherit}
+.hist-btn:hover:not(:disabled){border-color:var(--brand);color:var(--brand)}
+.hist-btn:disabled{opacity:.35;cursor:default}
 textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2px;font-size:13.5px;font-family:inherit;background:transparent;color:var(--ink)}
 .ctools{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:8px}
 .ctools .sp{flex:1}
 .cbtn{font-size:11px;color:var(--ink2);border:1px solid var(--line);border-radius:12px;padding:2px 9px;cursor:pointer}
 .cbtn:hover{border-color:var(--brand);color:var(--brand)}
+.tag{font-size:11px;color:var(--ink3);border:1px dashed var(--line);border-radius:12px;padding:2px 9px;cursor:default}
+.model{border:1px solid var(--line);background:transparent;color:var(--ink3);font-size:11px;font-family:inherit;border-radius:12px;padding:2px 9px;cursor:pointer}
+.model:hover{border-color:var(--brand);color:var(--brand)}
+.model.on{color:var(--brand);border-color:var(--brand);background:var(--brand-soft)}
+.model.blocked{color:var(--warn);border-color:var(--warn);background:var(--warn-bg)}
 .model{font-size:11px;color:var(--ink3)}
 .send{width:30px;height:30px;border:0;border-radius:50%;background:var(--brand);color:#fff;font-size:15px;cursor:pointer;line-height:1}
 .send:disabled{opacity:.55;cursor:wait}
@@ -158,13 +180,14 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
     <button class="newtask" id="new-conv">＋ 新建任务</button>
     <button class="side-link" id="kb-toggle">≡ 知识库 / 记忆</button>
     <a class="side-link" href="/" style="display:block;text-decoration:none">⌂ 品控日报后台</a>
-    <div class="tabs"><span class="on">任务</span><span>频道</span><span>定时</span></div>
+    <div class="tabs"><span class="on">任务</span><span class="off" title="频道功能尚未开放">频道</span><span class="off" title="定时功能尚未开放">定时</span></div>
     <div class="side-scroll">
-      <div class="group">置顶 <span>▾</span></div>
-      <div class="group">项目 <span>▾</span></div>
-      <div class="proj">▸ default-workspace</div>
-      <div class="group">最近 <span>▾</span></div>
-      <div id="conv-list"></div>
+      <div class="group" data-fold="pin">置顶 <span class="ar">▾</span></div>
+      <div class="grp-body" id="body-pin"><div class="proj" style="color:var(--ink3);font-size:11.5px">暂无置顶任务</div></div>
+      <div class="group" data-fold="proj">项目 <span class="ar">▾</span></div>
+      <div class="grp-body" id="body-proj"><div class="proj">▸ default-workspace <span class="lock">唯一工作区</span></div></div>
+      <div class="group" data-fold="recent">最近 <span class="ar">▾</span></div>
+      <div class="grp-body" id="body-recent"><div id="conv-list"></div></div>
       <div class="kb" id="kb-box" style="display:none">
         <div><span class="n" id="k-files">–</span> <span class="lbl">个文件</span>　<span class="n" id="k-entries">–</span> <span class="lbl">条目</span></div>
         <div class="lbl" style="margin-top:4px">待核对 <span id="k-pending">0</span>　公司材料 <span id="k-private">0</span></div>
@@ -186,7 +209,7 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
   </aside>
   <main class="main">
     <div class="winbar">
-      <span class="wb">应用　　编辑</span>
+      <span class="wb">FoodQC-Agent · 客户端</span>
       <div class="sp"></div>
       <span class="badge" id="conv-title">新对话</span>
       <span class="badge warn">判定型</span>
@@ -203,16 +226,22 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
     <div class="composer">
       <div class="cbox">
         <div class="cbar">
-          <span>默认工作区 ▾</span><span>判定模式 ▾</span>
-          <div class="sp"></div><span class="hist">历史 ↑↓</span>
+          <span class="tag" title="当前只有一个工作区，多工作区未开放">默认工作区</span>
+          <div class="dd" id="mode-dd">
+            <button id="mode-btn" title="选择这次提问走哪条路">自动 ▾</button>
+            <div class="ddmenu" id="mode-menu"></div>
+          </div>
+          <div class="sp"></div>
+          <button class="hist-btn" id="hist-up" title="上一条提问" disabled>↑</button>
+          <button class="hist-btn" id="hist-down" title="下一条提问" disabled>↓</button>
         </div>
         <textarea id="q" placeholder="描述你要判定的批次 / 想查的标准条款…（Enter 发送，Ctrl+Enter 换行）"></textarea>
         <div class="ctools">
           <span class="cbtn" id="kb-toggle2">＋ 知识库</span>
-          <span class="cbtn">只读 · 不放行</span>
-          <span class="cbtn">DEMO-only</span>
+          <span class="tag">只读 · 不放行</span>
+          <span class="tag">DEMO-only</span>
           <div class="sp"></div>
-          <span class="model">DeepSeek · 关闭</span>
+          <button class="model" id="llm-btn" title="点一下切换本次提问是否调用大模型">DeepSeek · 关闭</button>
           <button class="send" id="send">↑</button>
         </div>
       </div>
@@ -229,6 +258,15 @@ var CHIPS=[
  "出糙率 3 等限值是多少，依据在哪一条"
 ];
 var STORE='foodqc.sessions.v1', ACTIVE='foodqc.active.v1';
+var K_MODE='foodqc.mode.v1', K_LLM='foodqc.llm.v1', K_HIST='foodqc.history.v1', K_FOLD='foodqc.folds.v1';
+var MODE='auto', LLM_OVERRIDE=null, LLM_STATE={enabled:false,env:false,has_key:false,source:'env'};
+var HIST=[], HIST_POS=-1, FOLDS={};
+var MODE_LABEL={auto:'自动',judge:'判定模式',chat:'问答模式',lookup:'只查标准'};
+var MODE_DESC={
+ auto:'按问题自己判断：该查就查，该判就进判定链',
+ judge:'直接进判定链，逐项判 7 项指标并留痕',
+ chat:'只做检索与解释，不判定、不写留痕',
+ lookup:'只查标准条款与限值出处，不判合格'};
 var sessions=[], activeId=null;
 function esc(s){return String(s==null?'':s).replace(/[&<>"']/g,function(c){
  return {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c];});}
@@ -280,7 +318,7 @@ function renderMsgs(){
  list.forEach(function(m){
   if(m.role==='user')box.appendChild(buildUser(m.text));
   else if(m.role==='err')box.appendChild(buildErr(m.text));
-  else if(m.mode==='chat')box.appendChild(buildChat(m.data.answer||{}));
+  else if(m.mode==='chat')box.appendChild(buildChat(m.data.answer||{},m.data.meta||{}));
   else box.appendChild(buildRun(m.data));
  });
  scrollDown();
@@ -314,12 +352,15 @@ function tri(title,cls,arr){
  var lis=(arr||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('')||'<li>（无）</li>';
  return '<div class="'+cls+'"><b>'+title+'</b><ul>'+lis+'</ul></div>';
 }
-function buildChat(a){
+function buildChat(a,meta){
+ var mt=(meta&&meta.mode_used)?('<div class="meta"><span>模式 '+esc(MODE_LABEL[meta.mode_used]||meta.mode_used)+'</span>'+
+  '<span>路由 '+(meta.router==='llm'?'模型识别':(meta.router==='mode'?'模式强制':'规则'))+'</span>'+
+  '<span>模型 '+(meta.llm_used?'已调用':'未调用')+'</span></div>'):'';
  var lines=(a.lines||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('');
  var bd=(a.boundary||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('');
  var ex=(a.examples||[]).map(function(x){return '<button class="chip" data-q="'+esc(x)+'">'+esc(x)+'</button>';}).join('');
- var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+
-  '<div class="h3" style="font-size:14px;margin:0 0 9px">'+esc(a.title)+'</div>'+
+ var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+mt+
+  '<div class="h3" style="font-size:14px;margin:0 0 9px;margin-top:'+(mt?'8px':'0')+'">'+esc(a.title)+'</div>'+
   '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7">'+lines+'</ul>'+
   (bd?'<div class="disclaim" style="margin-top:11px"><ul style="margin:0;padding-left:16px">'+bd+'</ul></div>':'')+
   (ex?'<div class="h3">试试这样问</div><div class="chips" style="margin:0">'+ex+'</div>':'')+
@@ -335,7 +376,9 @@ function buildRun(d){
  }).join('');
  var s=d.sections||{};
  var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+
-  '<div class="meta"><span>批次 '+esc(d.batch_id)+'</span><span>终止 '+esc(d.stop_reason)+'</span>'+
+  '<div class="meta"><span>模式 '+esc(MODE_LABEL[d.mode_used]||d.mode_used||'自动')+'</span>'
+   +'<span>路由 '+(d.router==='llm'?'模型识别':(d.router==='mode'?'模式强制':'规则'))+'</span>'
+   +'<span>批次 '+esc(d.batch_id)+'</span><span>终止 '+esc(d.stop_reason)+'</span>'+
   '<span>步骤 '+esc(d.steps)+'</span><span>LLM '+(d.llm_used?'启用':'关闭')+'</span>'+
   '<span>'+esc(d.data_scope||'DEMO-only')+'</span></div>'+
   '<details open><summary>执行过程（'+esc((d.trace_events||[]).length)+' 条真实工具调用）</summary>'+ev+'</details>'+
@@ -349,23 +392,24 @@ function buildRun(d){
 }
 function addUser(txt){push({role:'user',text:txt});renderMsgs();}
 function addErr(txt){push({role:'err',text:txt});renderMsgs();}
-function addChat(a){push({role:'agent',mode:'chat',data:{answer:a}});renderMsgs();}
+function addChat(a,meta){push({role:'agent',mode:'chat',data:{answer:a,meta:meta||{}}});renderMsgs();}
 function addAgent(d){
- if(d.mode==='chat'){addChat(d.answer||{});return;}
+ if(d.mode==='chat'){addChat(d.answer||{},{mode_used:d.mode_used,router:d.router,llm_used:d.llm_used});return;}
  push({role:'agent',mode:'run',data:d});renderMsgs();
 }
 async function send(q){
  q=String(q||'').trim();if(!q)return;
- addUser(q);
- var b=el('send');b.disabled=true;b.textContent='运行中…';
+ addUser(q);pushHistory(q);
+ var b=el('send');b.disabled=true;b.textContent='…';
  try{
   var r=await fetch('/api/client/chat',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({question:q})});
+    body:JSON.stringify({question:q,mode:MODE,use_llm:LLM_OVERRIDE})});
   var d=await r.json();
   if(!r.ok||!d.ok){throw new Error(d.error||('HTTP '+r.status));}
+  if(d.llm_state)applyLlmState(d.llm_state);
   addAgent(d);
  }catch(e){addErr('运行失败：'+e.message);}
- finally{b.disabled=false;b.textContent='发送';el('q').value='';}
+ finally{b.disabled=false;b.textContent='↑';el('q').value='';el('q').focus();}
 }
 async function loadKB(){
  try{
@@ -400,6 +444,107 @@ CARDS.forEach(function(c){
  b.onclick=function(){send(c.q);};el('wcards').appendChild(b);
 });
 function toggleKB(){var b=el('kb-box');b.style.display=(b.style.display==='none'?'block':'none');}
+
+/* —— 判定模式下拉：真的会改变后端走哪条路 —— */
+function renderMode(){
+ el('mode-btn').textContent=MODE_LABEL[MODE]+' ▾';
+ var m=el('mode-menu');m.innerHTML='';
+ Object.keys(MODE_LABEL).forEach(function(k){
+  var b=document.createElement('button');
+  b.textContent=MODE_LABEL[k];b.className=(k===MODE?'on':'');
+  b.onclick=function(){setMode(k);el('mode-dd').classList.remove('open');};
+  m.appendChild(b);
+ });
+ var n=document.createElement('div');n.className='note';n.textContent=MODE_DESC[MODE];
+ m.appendChild(n);
+}
+function setMode(k){
+ if(!MODE_LABEL[k])return;
+ MODE=k;try{localStorage.setItem(K_MODE,k);}catch(e){}
+ renderMode();el('q').focus();
+}
+
+/* —— DeepSeek 开关：显示的是服务端真实状态，不是贴纸 —— */
+function applyLlmState(s){if(s)LLM_STATE=s;renderLlm();}
+function llmOn(){
+ return LLM_OVERRIDE===null ? !!(LLM_STATE&&LLM_STATE.enabled) : LLM_OVERRIDE;
+}
+function renderLlm(){
+ var b=el('llm-btn');b.className='model';var on=llmOn();
+ if(on&&!(LLM_STATE&&LLM_STATE.has_key)){
+  b.classList.add('blocked');b.textContent='DeepSeek · 无Key';
+  b.title='服务端没有 DEEPSEEK_API_KEY，开了也会自动降级回规则路由';return;
+ }
+ if(on){
+  b.classList.add('on');b.textContent='DeepSeek · 开启';
+  b.title='本次会调模型做意图识别；判定数字与结论仍由代码算';
+ }else{
+  b.textContent='DeepSeek · 关闭';
+  b.title='本次不调模型，走规则路由（离线可用）';
+ }
+}
+function toggleLlm(){
+ LLM_OVERRIDE=!llmOn();
+ try{localStorage.setItem(K_LLM,LLM_OVERRIDE?'on':'off');}catch(e){}
+ renderLlm();
+}
+
+/* —— 历史 ↑↓：翻本机发过的提问 —— */
+function pushHistory(q){
+ if(!HIST.length||HIST[0]!==q)HIST.unshift(q);
+ HIST=HIST.slice(0,50);HIST_POS=-1;
+ try{localStorage.setItem(K_HIST,JSON.stringify(HIST));}catch(e){}
+ renderHist();
+}
+function renderHist(){
+ el('hist-up').disabled=!HIST.length;
+ el('hist-down').disabled=!(HIST_POS>=0);
+}
+function histPrev(){
+ if(!HIST.length)return;
+ if(HIST_POS<HIST.length-1)HIST_POS++;
+ el('q').value=HIST[HIST_POS];renderHist();el('q').focus();
+}
+function histNext(){
+ if(HIST_POS<0)return;
+ HIST_POS--;
+ el('q').value=HIST_POS<0?'':HIST[HIST_POS];
+ renderHist();el('q').focus();
+}
+
+/* —— 左栏分组真的能折叠 —— */
+function renderFolds(){
+ document.querySelectorAll('.group[data-fold]').forEach(function(g){
+  var k=g.dataset.fold,body=el('body-'+k),folded=!!FOLDS[k];
+  g.classList.toggle('folded',folded);
+  if(body)body.classList.toggle('folded',folded);
+ });
+}
+function toggleFold(k){
+ FOLDS[k]=!FOLDS[k];
+ try{localStorage.setItem(K_FOLD,JSON.stringify(FOLDS));}catch(e){}
+ renderFolds();
+}
+
+function loadPrefs(){
+ try{
+  var m=localStorage.getItem(K_MODE);if(m&&MODE_LABEL[m])MODE=m;
+  var l=localStorage.getItem(K_LLM);
+  LLM_OVERRIDE = l==='on' ? true : (l==='off' ? false : null);
+  var h=localStorage.getItem(K_HIST);HIST=h?JSON.parse(h):[];
+  if(!Array.isArray(HIST))HIST=[];
+  var f=localStorage.getItem(K_FOLD);FOLDS=f?JSON.parse(f):{};
+  if(!FOLDS||typeof FOLDS!=='object')FOLDS={};
+ }catch(e){HIST=[];FOLDS={};LLM_OVERRIDE=null;}
+ HIST_POS=-1;
+}
+async function loadState(){
+ try{
+  var r=await fetch('/api/client/state');var d=await r.json();
+  if(d&&d.ok)applyLlmState(d.llm);
+ }catch(e){}
+}
+
 el('kb-toggle').onclick=toggleKB;
 el('kb-toggle2').onclick=toggleKB;
 el('send').onclick=function(){send(el('q').value);};
@@ -412,7 +557,21 @@ el('theme').onclick=function(){
  var b=document.body;b.dataset.theme=b.dataset.theme==='dark'?'light':'dark';
  el('theme').textContent=b.dataset.theme==='dark'?'切换浅色':'切换深色';
 };
-loadStore();renderAll();loadKB();
+el('mode-btn').onclick=function(e){
+ e.stopPropagation();el('mode-dd').classList.toggle('open');
+};
+el('llm-btn').onclick=toggleLlm;
+el('hist-up').onclick=histPrev;
+el('hist-down').onclick=histNext;
+document.addEventListener('click',function(e){
+ var dd=el('mode-dd');if(dd&&!dd.contains(e.target))dd.classList.remove('open');
+});
+document.querySelectorAll('.group[data-fold]').forEach(function(g){
+ g.onclick=function(){toggleFold(g.dataset.fold);};
+});
+
+loadStore();loadPrefs();renderAll();renderMode();renderLlm();renderFolds();renderHist();
+loadKB();loadState();
 </script>
 </body>
 </html>
@@ -460,6 +619,71 @@ def client_index():
     return _PAGE
 
 
+_MODES = ("auto", "judge", "chat", "lookup")
+
+
+def _norm_mode(raw: Any) -> str:
+    m = str(raw or "auto").strip().lower()
+    return m if m in _MODES else "auto"
+
+
+def _norm_use_llm(raw: Any) -> bool | None:
+    """三态：True 强制开 / False 强制关 / None 跟随服务端环境变量。"""
+    if isinstance(raw, bool):
+        return raw
+    if isinstance(raw, str):
+        v = raw.strip().lower()
+        if v in ("1", "true", "on", "yes", "开", "开启"):
+            return True
+        if v in ("0", "false", "off", "no", "关", "关闭"):
+            return False
+    return None
+
+
+def _mode_notice(question: str) -> dict:
+    """问答模式下挡回判定请求：说明为什么没判，以及怎么切。"""
+    return {
+        "title": "这是判定类问题，但当前是「问答模式」，我没有进判定链",
+        "lines": [
+            "问答模式只做检索与解释，不判合格、不算等级、不写留痕。",
+            "要逐项判这批货，把上方「问答模式 ▾」切到「判定模式」，再发一次。",
+        ],
+        "boundary": ["判定必须是一次显式动作，不能被顺手触发",
+                     "演示只用 DEMO- 开头的假批次，真实批次号与实测值不进本系统"],
+        "examples": ["DEMO-001 这批稻谷出糙率 76.5 能收吗", "出糙率 3 等限值是多少"],
+    }
+
+
+def _decide(question: str, mode: str) -> tuple[dict | None, bool, str]:
+    """入口分流。返回 (payload | None, 是否真的调了模型, 路由器)。
+
+    payload 为 None = 交给判定链；否则直接渲染这段回答。
+    """
+    from . import intent
+
+    if mode == "lookup":                       # 只查标准：不进判定，只检索语料
+        return {"answer": intent.knowledge_answer(question)}, False, "rules"
+    if mode == "judge":                        # 判定模式：跳过意图层直接进链
+        return None, False, "mode"
+
+    action, payload = intent.llm_route(question)
+    used_llm = action != "fallback"
+    if action == "fallback":
+        routed = intent.route(question)
+        if routed:
+            return {"answer": routed["answer"]}, used_llm, "rules"
+        if mode == "chat":                     # 规则层认为该判定，但用户在问答模式
+            return {"answer": _mode_notice(question)}, False, "mode"
+        return None, used_llm, "rules"         # 自动模式：判定请求进链
+    if action == "judge":
+        if mode == "chat":
+            return {"answer": _mode_notice(question)}, used_llm, "mode"
+        return None, used_llm, "llm"
+    if payload and payload.get("answer"):
+        return {"answer": payload["answer"]}, used_llm, "llm"
+    return None, used_llm, "llm"
+
+
 @client_bp.post("/api/client/chat")
 def client_chat():
     data = request.get_json(silent=True) or {}
@@ -469,60 +693,76 @@ def client_chat():
     if len(question) > 300:
         return jsonify({"ok": False, "error": "问题请控制在 300 字以内"}), 400
 
-    # 入口理解层：先试可选 LLM 意图识别（只出白名单意图+检索词，不产数字/结论），
-    # 没 key / 未开 / 超时 / 异常一律静默退回规则路由。判定请求才进 harness。
-    from . import intent
-    action, payload = intent.llm_route(question)
-    used_llm = action != "fallback"
-    if action == "fallback":
-        routed = intent.route(question)
-        payload = {"answer": routed["answer"]} if routed else None
-    elif action == "judge":
-        payload = None
-    if payload is not None:
-        return jsonify({
-            "ok": True, "mode": "chat", "question": question,
-            "answer": payload["answer"],
-            "router": "llm" if used_llm else "rules",
-            "batch_id": "", "stop_reason": "chat_route", "steps": 0,
-            "tools_called": [], "llm_used": used_llm,
-            "data_scope": "入口理解层（未进入判定链）",
-            "sections": {}, "trace_events": [],
-            "trace_path": "", "summary_path": "", "report_path": "",
-        })
+    from . import flags
 
-    sink = io.StringIO()
+    mode = _norm_mode(data.get("mode"))
+    token = flags.set_llm(_norm_use_llm(data.get("use_llm")))
+    state = flags.llm_state()          # 生效状态要先取，finally 里会还原
     try:
-        with _HARNESS_LOCK:
-            from . import harness
-            with contextlib.redirect_stdout(sink):   # 吞掉 CLI 式打印，不污染 Web 日志
-                result = harness.run_harness(question)
-    except ImportError:
-        return jsonify({"ok": False, "error": "harness.py 尚未就绪"}), 503
-    except Exception as e:
-        return jsonify({"ok": False, "error": f"运行失败（{type(e).__name__}）：{str(e)[:160]}"}), 500
+        # 入口理解层：先试可选 LLM 意图识别（只出白名单意图+检索词，不产数字/结论），
+        # 没 key / 未开 / 超时 / 异常一律静默退回规则路由。判定请求才进 harness。
+        payload, used_llm, router = _decide(question, mode)
+        if payload is not None:
+            return jsonify({
+                "ok": True, "mode": "chat", "question": question,
+                "answer": payload["answer"],
+                "router": router,
+                "mode_used": mode,
+                "llm_state": state,
+                "batch_id": "", "stop_reason": "chat_route", "steps": 0,
+                "tools_called": [], "llm_used": used_llm,
+                "data_scope": "入口理解层（未进入判定链）",
+                "sections": {}, "trace_events": [],
+                "trace_path": "", "summary_path": "", "report_path": "",
+            })
 
-    if result.get("reject") or result.get("ok") is False:
-        return jsonify({"ok": False,
-                        "error": "只接受 DEMO- 假批次；真实批次号与实测值不进本系统"}), 400
+        sink = io.StringIO()
+        try:
+            with _HARNESS_LOCK:
+                from . import harness
+                with contextlib.redirect_stdout(sink):   # 吞掉 CLI 式打印，不污染 Web 日志
+                    result = harness.run_harness(question)
+        except ImportError:
+            return jsonify({"ok": False, "error": "harness.py 尚未就绪"}), 503
+        except Exception as e:
+            return jsonify({"ok": False, "error": f"运行失败（{type(e).__name__}）：{str(e)[:160]}"}), 500
 
-    trace_path = result.get("trace_path", "")
-    return jsonify({
-        "ok": True,
-        "mode": "run",
-        "question": question,
-        "batch_id": result.get("batch_id", ""),
-        "stop_reason": result.get("stop_reason", ""),
-        "steps": result.get("steps", 0),
-        "tools_called": result.get("tools_called", []),
-        "llm_used": bool(result.get("llm_used")),
-        "data_scope": result.get("data_scope", "DEMO-only"),
-        "sections": result.get("sections", {}),
-        "trace_events": _read_trace(trace_path),
-        "trace_path": _relative(trace_path),
-        "summary_path": _relative(result.get("summary_path", "")),
-        "report_path": _relative(result.get("report_path", "")),
-    })
+        if result.get("reject") or result.get("ok") is False:
+            return jsonify({"ok": False,
+                            "error": "只接受 DEMO- 假批次；真实批次号与实测值不进本系统"}), 400
+
+        trace_path = result.get("trace_path", "")
+        return jsonify({
+            "ok": True,
+            "mode": "run",
+            "mode_used": mode,
+            "router": router,
+            "llm_state": state,
+            "question": question,
+            "batch_id": result.get("batch_id", ""),
+            "stop_reason": result.get("stop_reason", ""),
+            "steps": result.get("steps", 0),
+            "tools_called": result.get("tools_called", []),
+            "llm_used": bool(result.get("llm_used")),
+            "data_scope": result.get("data_scope", "DEMO-only"),
+            "sections": result.get("sections", {}),
+            "trace_events": _read_trace(trace_path),
+            "trace_path": _relative(trace_path),
+            "summary_path": _relative(result.get("summary_path", "")),
+            "report_path": _relative(result.get("report_path", "")),
+        })
+    finally:
+        flags.reset_llm(token)
+
+
+@client_bp.get("/api/client/state")
+def client_state():
+    """前端初始化用：真实的服务端状态，避免再挂一个假标签。"""
+    from . import flags
+    return jsonify({"ok": True, "llm": flags.llm_state(),
+                    "modes": [{"key": k, "label": v} for k, v in
+                              (("auto", "自动"), ("judge", "判定模式"),
+                               ("chat", "问答模式"), ("lookup", "只查标准"))]})
 
 
 @client_bp.get("/api/client/knowledge")

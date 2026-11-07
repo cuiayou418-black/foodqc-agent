@@ -327,7 +327,12 @@ def _llm_session():
 
 
 def _llm_enabled() -> bool:
-    return os.getenv("QC_USE_LLM", "").strip().lower() not in ("", "0", "false", "off", "no")
+    """是否允许调模型。请求级开关（前端 DeepSeek 按钮）优先于环境变量。"""
+    try:
+        from . import flags
+        return flags.llm_enabled()
+    except Exception:
+        return os.getenv("QC_USE_LLM", "").strip().lower() not in ("", "0", "false", "off", "no")
 
 
 def _llm_loop(client, question, batch_id, indicator, state) -> str | None:

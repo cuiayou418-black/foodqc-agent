@@ -229,8 +229,14 @@ def llm_route(question: str) -> tuple[str, dict | None]:
     ⚠️ 模型只输出「白名单意图 + 检索词 + 一句人话」，绝不产出数字或结论；
        意图不在白名单、JSON 解析失败、任何异常，一律回退，不让模型碰判定。
     """
-    if os.getenv("QC_USE_LLM", "").strip().lower() in ("", "0", "false", "off"):
-        return "fallback", None
+    # 请求级开关优先（前端 DeepSeek 按钮），其次环境变量 QC_USE_LLM
+    try:
+        from . import flags
+        if not flags.llm_enabled():
+            return "fallback", None
+    except Exception:
+        if os.getenv("QC_USE_LLM", "").strip().lower() in ("", "0", "false", "off"):
+            return "fallback", None
     try:
         from dotenv import load_dotenv
         load_dotenv()
