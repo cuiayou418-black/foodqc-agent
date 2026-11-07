@@ -130,8 +130,23 @@ def _table_cells(line: str) -> str:
     return " · ".join(cells[:8]) if cells else ""
 
 
+#: 指标别名：问题里常写元素符号，语料里写中文名。不映射就永远命中不了，
+#: 然后被无关段落顶上来（2026-11-07 实例：问「Cd」答成「油脂铅」）。
+_ALIAS = {"cd": "镉", "pb": "铅", "hg": "汞", "as": "砷", "cr": "铬",
+          "afb1": "黄曲霉", "黄曲霉毒素b1": "黄曲霉", "黄曲霉毒素b₁": "黄曲霉"}
+#: 污染物词：只要问题里出现，答案就必须真的提到它，不许拿别的污染物顶
+_CONTAMINANTS = ("镉", "铅", "无机砷", "总砷", "砷", "汞", "铬", "黄曲霉毒素", "黄曲霉",
+                 "苯并", "溶剂残留", "农药残留")
+#: 物类词：问大米不许答油脂
+_CATEGORY = ("大米", "稻谷", "糙米", "粳米", "籼米", "米制品", "谷物", "小麦", "玉米",
+             "大豆", "植物油", "油脂", "花生油", "菜籽油", "食用植物油")
+
+
 def _present_para(para: str) -> str:
-    """非表格段落：代码块、文件名清单这类日志内容不作为答案。"""
+    """非表格段落：先洗掉 markdown 记号，再截断。
+
+    语料是笔记体，`**强调**`、`> 引用`、`- 列表` 到处都是；原样吐给用户就是一屏星号。
+    """
     p = para.strip()
     if "```" in p:
         p = p.split("```")[0].strip()
@@ -139,7 +154,41 @@ def _present_para(para: str) -> str:
             return ""
     if p.count("|") > 3:
         return _table_cells(p)
+    for _ in range(3):                      # 多层引用 `> > `
+        p = re.sub(r"^\s*>\s?", "", p, flags=re.M)
+    p = re.sub(r"^\s*#{1,6}\s*", "", p, flags=re.M)
+    p = re.sub(r"^\s*[-*+]\s+", "· ", p, flags=re.M)
+    p = re.sub(r"\*\*(.+?)\*\*", r"\1", p)
+    p = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", p)
+    p = re.sub(r"`([^`]*)`", r"\1", p)
+    p = re.sub(r"\s*\n\s*", " ", p).strip()
     return p[:260]
+
+
+def _must_entities(question: str) -> tuple[list[str], list[str]]:
+    """问题要求答案必须回扣的实体：([指标/污染物], [物类])。
+
+    命中不了就别给答案 —— 宁可拒答，不可答非所问。
+    """
+    q = str(question or "").lower()
+    ents: list[str] = []
+    for alias, cn in _ALIAS.items():
+        if alias in q and cn not in ents:
+            ents.append(cn)
+    ents += [c for c in _CONTAMINANTS if c in question and c not in ents]
+    ents += [t for t in indicators() if t in question and t not in ents]
+    cats = [c for c in _CATEGORY if c in question]
+    return ents, cats
+
+
+def _ent_in(ent: str, text: str) -> bool:
+    """实体命中判定：中文词直接判，别名（Cd↔镉）两边都认。"""
+    if ent in text:
+        return True
+    for alias, cn in _ALIAS.items():
+        if cn == ent and alias in text.lower():
+            return True
+    return False
 
 
 def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
@@ -152,12 +201,31 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
         return note
 
     if terms is None:
-        terms = [t for t in indicators() if t in question]
+        terms = []
+        for ind in indicators():
+            if ind in question:
+                terms.append(ind)
+                continue
+            # 「水分含量」对「水分」、「整精米率」对「整精米」：去掉量纲后缀再试一次，
+            # 否则用户说「稻谷水分限值」永远命中不了「水分含量」这个键。
+            for suf in ("含量", "率", "量"):
+                if ind.endswith(suf) and ind[:-len(suf)] and ind[:-len(suf)] in question:
+                    terms.append(ind)
+                    break
         stds = re.findall(r"GB\s*/?\s*T?\s*\d{3,5}", question, re.IGNORECASE)
         terms += [s.strip() for s in stds]
-        extra = ("定等", "等级", "下限", "上限", "判定", "验收", "扦样", "杂质", "黄曲霉", "镉")
+        extra = ("定等", "等级", "下限", "上限", "判定", "验收", "扦样", "杂质")
         terms += [e for e in extra if e in question]
-    terms = [str(t).strip() for t in terms if str(t).strip()][:6]
+        # 污染物必须进检索词，否则问「铅」时 terms 为空、直接掉进拒答分支
+        terms += [c for c in _CONTAMINANTS if c in question]
+        terms = list(dict.fromkeys(terms))
+    must, cats = _must_entities(question)
+    terms = [str(t).strip() for t in terms if str(t).strip()]
+    # 别名映射出来的中文词（Cd→镉 / Pb→铅）必须一起进检索词，
+    # 否则用户写元素符号时 terms 为空、直接掉进拒答分支（2026-11-07 实测踩到）。
+    terms = list(dict.fromkeys(terms + must))
+    # 必须命中的实体排前面，别被 [:8] 截掉（污染物词往往排在最后）
+    terms = ([t for t in terms if t in must] + [t for t in terms if t not in must])[:8]
 
     hits: list[str] = []
     sources: list[str] = []
@@ -165,8 +233,15 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
     if terms:
         for path in sorted(kb.CORPUS.glob("*.md")):
             text = kb._decode(path.read_bytes())
+            # 文件级硬闸门：整份文件里都没有问题问的那个指标/污染物，
+            # 这份文件的任何段落都不许拿来答（否则就会出现「问镉答铅」）。
+            if must and not any(_ent_in(m, text) for m in must):
+                continue
             for para in kb.split_entries(text):
                 if len(para) < 20 or not any(t in para for t in terms):
+                    continue
+                # 物类闸门：问大米不许拿油脂的段落顶
+                if cats and not any(c in para for c in cats):
                     continue
                 # 表格块按行拆，只留真正命中的那几行，别把整张表糊给用户
                 if para.count("|") > 3:
@@ -189,6 +264,10 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
                     # 问限值时，带 ≥/≤ 的表行优先，别拿版本说明来凑答案
                     if any(ch in cand for ch in ("≥", "≤", ">=", "<=")):
                         score += 5
+                    # 命中所问物类（大米 / 油脂）的行再往前排，
+                    # 否则问油脂会把同表的谷物行顶到第一条
+                    if cats and any(c in cand for c in cats):
+                        score += 4
                     scored.append((score, cand[:260], path.name))
         scored.sort(key=lambda x: -x[0])
         for _s, para, name in scored[:3]:
@@ -212,6 +291,27 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
             "examples": ["整精米率和出糙率有什么区别",
                          "DEMO-001 这批稻谷出糙率 76.5 能收吗"],
         }
+    # 拒答要说清「缺的是哪一条」，不能用「没找到相关段落」糊过去。
+    # 问到了具体指标却没命中，说明这条限值没进库，用户需要知道的是这个。
+    if must:
+        missing = "、".join(dict.fromkeys(must))[:24]
+        cat = f"（{cats[0]}）" if cats else ""
+        return {
+            "title": f"库里没有「{missing}」的限值记录",
+            "lines": [
+                f"我把 corpus/ 下的语料全翻了一遍，没有找到能回答「{missing}」{cat}的段落。",
+                "这是真没有，不是我不肯答——硬凑一个别的指标的数字给你，比直接说没有危险得多。",
+                f"补齐的办法：把写着「{missing}」限值的那份国标原文找出来，逐格核对后放进 corpus/，"
+                "再问我一次。",
+            ],
+            "boundary": [
+                "已收录范围：GB 1350 稻谷质量要求、GB 2716/2761/2762 中已核对的条目、"
+                "检验方法标准与术语（详见 corpus/README.md）",
+                "未收录：GB 2762 的镉、无机砷等尚未逐格核对的污染物限值",
+                "真实批次与实测值不进本系统",
+            ],
+            "examples": capability_answer()["examples"],
+        }
     return {
         "title": "这个问法，语料里还没有能直接引用的段落",
         "lines": [
@@ -224,6 +324,31 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
                      "真实批次与实测值不进本系统"],
         "examples": capability_answer()["examples"],
     }
+
+
+#: 说人话就该直接触发业务任务，而不是让人再去另一个页面点按钮填表单。
+#: 只收「明显是整批活儿」的说法；单批能不能收仍走判定链，这里不抢。
+_TASK_HINTS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("quality_record_audit",
+     ("敲错", "录错", "填错", "输错", "疑点", "自查", "有没有错", "串行", "对不上")),
+    ("grain_daily_report",
+     ("日报", "出报告", "出份报告", "汇总", "所有批次", "今天的表", "这几张表",
+      "整批", "全部批次", "做个汇总")),
+)
+
+
+def task_route(question: str) -> str | None:
+    """识别「这句话其实是在下一个业务任务」的情况，返回 task_id。
+
+    单批 DEMO 判定不在此列（有专门的判定链），避免抢已有链路。
+    """
+    q = str(question or "")
+    if re.search(r"DEMO-\d+", q, re.IGNORECASE):
+        return None
+    for task_id, kws in _TASK_HINTS:
+        if any(k in q for k in kws):
+            return task_id
+    return None
 
 
 def route(question: str) -> dict | None:
