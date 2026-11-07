@@ -178,6 +178,12 @@ def _headline(d: dict) -> tuple[str, str]:
     """
     sec = d.get("sections") or {}
     met = d.get("metrics") or {}
+    # 拒跑的时候，「为什么没跑」就是这次唯一的结论，别让人去折叠区里找
+    if d.get("status") == "failed":
+        errs = [str(e) for e in (d.get("errors") or []) if str(e).strip()]
+        if errs:
+            return f"没做 —— {errs[0]}", "bad"
+        return "没做 —— 没给出原因，展开「技术信息」看留痕", "bad"
     n_ok = len(sec.get("已确认") or [])
     rev = [str(x) for x in (sec.get("待人工复核") or [])]
     n_rev_v = sum(1 for x in rev if "→ 代码判定「" in x)          # 逐项结论
@@ -264,7 +270,9 @@ def _build_view(d: dict, run_id: str) -> dict:
     alerts = []
     for a in (d.get("metrics") or {}).get("alerts") or []:
         alerts.append(str(a))
-    for e in d.get("errors") or []:
+    errs = [str(e) for e in (d.get("errors") or []) if str(e).strip()]
+    # 失败时第一条已经当一句话结论了，别在这儿再念一遍
+    for e in (errs[1:] if (d.get("status") == "failed" and errs) else errs):
         alerts.append(f"报错：{e}")
 
     tech_files = [a["name"] for a in arts

@@ -212,6 +212,17 @@ class TaskRunner:
             return ctx
         if not self._demo_only(db_path, res):
             return ctx
+        missing = self._missing_limits(db_path)
+        if missing:
+            names = "、".join(f"{k}（{v} 条）" for k, v in list(missing.items())[:6])
+            res.status = "failed"
+            res.errors.append(f"这些记录没取到限值，系统不猜限值、不判：{names}")
+            res.notes.append(
+                "原因：当前执行版（GB 1350—2009）限值还没人工核对，宽表模式不会拿 2025 版的数补齐；"
+                "补了就成「按新版判旧货」。下一步：改用带「实测值 / 指标方向 / 限值 / 标准号 / "
+                "限值出处」列的明细表，或先核对限值后回填。")
+            self._trace(res, "failed", "missing_limits", str(missing)[:300])
+            return ctx
         ctx["input_db"] = db_path
         ctx["input_digest"] = self._input_digest(db_path)
         self._trace(res, "collecting", "input_digest", ctx["input_digest"])
@@ -242,6 +253,23 @@ class TaskRunner:
         finally:
             conn.close()
         return fingerprint(payload)
+
+    @staticmethod
+    def _missing_limits(db_path: str) -> dict[str, int]:
+        """宽表常见情形：项目名能认，但限值取不到。这种必须拦在判定之前。
+
+        不拦的后果不是「少判一条」，是 compare(None) 直接抛 TypeError，
+        整次任务变成一句英文报错——使用人只会以为系统坏了。
+        """
+        try:
+            conn = sqlite3.connect(db_path)
+            rows = conn.execute(
+                "SELECT item, COUNT(*) FROM quality WHERE limit_value IS NULL GROUP BY item"
+            ).fetchall()
+            conn.close()
+            return {str(r[0]): int(r[1]) for r in rows if r[0]}
+        except sqlite3.Error:
+            return {}
 
     def _demo_only(self, db_path: str, res: TaskResult) -> bool:
         """DEMO-only 红线：批次号必须 DEMO- 前缀（实测值无法判真假，只拦批次号）。"""
