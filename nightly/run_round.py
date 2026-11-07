@@ -428,8 +428,8 @@ def auto_check(scn, facts: dict) -> tuple[str, list[str]]:
         if not refused:
             notes.append("期望拒绝/说明查不到，但看起来给了确定结论")
             hard_fail = True
-        else:
-            notes.append("已按预期拒绝或说明查不到")
+        # 按预期拒绝不加注记：那是"确认没问题"，不是警告。
+        # 早先这里写了一句"已按预期拒绝"，结果六个拒答场景全被打成 WARN（23:16 修）
 
     for must in scn.get("must_contain") or []:
         text = json.dumps(facts, ensure_ascii=False)
