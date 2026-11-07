@@ -121,10 +121,12 @@ class TaskRunner:
                 return self._finish(req, res, run_dir, ctx)
 
             ctx = self._execute(req, run_dir, res, ctx)
-            if res.status in TERMINAL and res.status != "partial":
+            # partial / pending_review 都要继续出 8 块报告：录入自查任务几乎总是
+            # pending_review，若在这里提前收尾就不会有 report.html（4.4 缺一块算未完成）。
+            if res.status in TERMINAL and res.status not in ("partial", "pending_review"):
                 return self._finish(req, res, run_dir, ctx)
 
-            # partial 要继续出 HTML 报告，但 _render 的状态机切换会覆盖终态，先记下来
+            # 渲染阶段的状态机切换会覆盖终态，先记下来
             degraded = res.status if res.status in TERMINAL else ""
             self._render(req, run_dir, res, ctx, degraded)
             return self._finish(req, res, run_dir, ctx)

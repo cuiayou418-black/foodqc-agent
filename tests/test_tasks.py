@@ -270,6 +270,20 @@ class TestTaskExceptions(unittest.TestCase):
         for key in ("run_id", "status", "verify_report", "input_digest", "conclusion_digest"):
             self.assertIn(key, out)
 
+    def test_5_audit_pending_review_still_renders_8_blocks(self):
+        """pending_review 不能提前收尾：录入自查任务也必须出 8 块报告（4.4）。"""
+        from qc_daily.tasks.report import BLOCKS
+
+        req = TaskRequest(task_id="quality_record_audit", inputs=[self.sample],
+                          report_date="2026-11-05", formats=["html"],
+                          output_root=self.out_root)
+        res = TaskRunner(config=self.cfg).run(req)
+        self.assertEqual(res.status, "pending_review")
+        html = (Path(res.run_dir) / "report.html").read_text(encoding="utf-8")
+        for i, block in enumerate(BLOCKS, 1):
+            self.assertIn(f">{i}. {block}", html)
+        self.assertTrue(res.verify_ok)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
