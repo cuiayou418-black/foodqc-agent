@@ -375,3 +375,80 @@ def llm_route(question: str) -> tuple[str, dict | None]:
         }}
     except Exception:
         return "fallback", None
+
+
+# ------------------------------------------------------------------ 任务理解层（Phase 5 纯增量）
+# 只做「自然语言 + 文件清单 → TASKS key + 参数」。route() / llm_route() /
+# _ALLOWED_INTENTS 一个字不动；模型输出的数字绝不进 TaskRequest 的判定字段。
+# 自由文本只用于这一步识别，识别结果落成 TaskRequest 后才执行。
+
+_TASK_WORDS = {
+    "grain_daily_report": ("日报", "验收日报", "出报告", "生成报告", "汇总", "做成日报", "品控日报"),
+    "grain_batch_judge": ("判定", "逐项", "能收", "合格", "定等", "几等", "这批", "批次判定"),
+    "quality_record_audit": ("自查", "敲错", "疑点", "录入", "核对表", "有没有错", "检查记录"),
+}
+
+
+def _task_candidates() -> list[dict]:
+    from .tasks import list_tasks
+    return list_tasks()
+
+
+def _task_result(task_id: str, files: list[str], router: str) -> dict:
+    return {"ok": True, "task_id": task_id,
+            "params": {"inputs": files, "router": router},
+            "note": "参数只取任务 ID 与文件清单；判定所需限值 / 实测值一律由代码从表读取"}
+
+
+def llm_understand_task(text: str, files: list[str] | None = None) -> dict | None:
+    """可选 LLM：只输出白名单内 task_id；任何数字 / 限值 / 结论都不进参数。
+
+    无 key / 未开 QC_USE_LLM / 超时 / 非法 JSON / 白名单外 → 静默返回 None，
+    由 understand_task() 的规则兜底，不把失败抛给用户。
+    """
+    try:
+        from . import flags
+        if not flags.llm_enabled():
+            return None
+        from dotenv import load_dotenv
+        load_dotenv()
+        key = os.getenv("DEEPSEEK_API_KEY", "")
+        if not key:
+            return None
+        from openai import OpenAI
+        from .tasks.registry import TASKS
+        client = OpenAI(api_key=key, base_url="https://api.deepseek.com",
+                        timeout=8.0, max_retries=0)
+        resp = client.chat.completions.create(
+            model="deepseek-chat", temperature=0.0,
+            messages=[{"role": "system", "content":
+                       "你是任务识别器。只输出一个 JSON：{\"task_id\":\"...\"}，"
+                       "task_id 必须来自给定白名单。禁止输出任何数字、限值、判定结论。"
+                       f"白名单：{', '.join(TASKS)}"},
+                      {"role": "user", "content": str(text)[:300]}])
+        raw = (resp.choices[0].message.content or "").strip()
+        raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+        tid = str(json.loads(raw).get("task_id", "")).strip()
+        if tid not in TASKS:
+            return None
+        return _task_result(tid, list(files or []), "llm")
+    except Exception:
+        return None
+
+
+def understand_task(text: str, files: list[str] | None = None) -> dict:
+    """自然语言 + 文件清单 → 白名单内 task_id + 参数；白名单外给候选让人选，不硬猜。"""
+    q = str(text or "").strip()
+    fs = [str(f) for f in (files or []) if str(f).strip()]
+    if not q:
+        return {"ok": False, "candidates": _task_candidates(),
+                "reason": "没看明白要做什么，请从候选任务里选一个"}
+    got = llm_understand_task(q, fs)
+    if got:
+        return got
+    scores = {k: sum(1 for w in ws if w in q) for k, ws in _TASK_WORDS.items()}
+    best = max(scores, key=scores.get)
+    if scores[best] == 0:
+        return {"ok": False, "candidates": _task_candidates(),
+                "reason": f"「{q[:40]}」没命中任何任务关键词；请从候选任务里选，不硬猜"}
+    return _task_result(best, fs, "rules")

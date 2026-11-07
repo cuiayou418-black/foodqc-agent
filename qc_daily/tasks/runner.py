@@ -58,6 +58,7 @@ class TaskResult:
     trace: list[dict] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
+    alerts: list[dict] = field(default_factory=list)   # 含 error 级校验触发的 critical 告警
     run_dir: str = ""
     input_digest: str = ""
     data_checksum: str = ""
@@ -123,7 +124,9 @@ class TaskRunner:
             if res.status in TERMINAL and res.status != "partial":
                 return self._finish(req, res, run_dir, ctx)
 
-            self._render(req, run_dir, res, ctx)
+            # partial 要继续出 HTML 报告，但 _render 的状态机切换会覆盖终态，先记下来
+            degraded = res.status if res.status in TERMINAL else ""
+            self._render(req, run_dir, res, ctx, degraded)
             return self._finish(req, res, run_dir, ctx)
 
         except RequestError as e:
@@ -338,6 +341,7 @@ class TaskRunner:
         errors = [str(x) for x in (result.errors or [])]
         ctx["agent_status"] = result.status
         ctx["agent_errors"] = errors
+        res.alerts = [a.to_dict() for a in (result.alerts or [])]
 
         err_level = [i for i in ctx["validation_issues"] if i["level"] == "error"]
         if err_level or result.status == "failed":
@@ -430,7 +434,7 @@ class TaskRunner:
         return ctx
 
     # ---------------------------------------------------------------- 报告装配
-    def _render(self, req, run_dir, res, ctx) -> None:
+    def _render(self, req, run_dir, res, ctx, degraded: str = "") -> None:
         spec = get_spec(req.task_id)
         self._state(res, "rendering", "装配 8 块任务报告")
         rows = ctx.get("verdicts") or []
@@ -457,7 +461,7 @@ class TaskRunner:
         ctx.update({
             "task_id": req.task_id, "run_id": res.run_id,
             "title": spec.name, "started_at": res.started_at,
-            "finished_at": iso_now(), "status": res.status,
+            "finished_at": iso_now(), "status": degraded or res.status,
             "data_range": req.report_date,
             "input_digest": ctx.get("input_digest", ""),
             "data_checksum": ctx.get("data_checksum", ""),
@@ -479,8 +483,10 @@ class TaskRunner:
         res.conclusion_digest = ctx["conclusion_digest"]
         res.metrics = ctx.get("metrics") or {}
         res.sections = ctx.get("sections") or {}
+        if degraded and res.status != "failed":
+            res.status = degraded
         self._trace(res, "rendering", "report_written",
-                    f"{BLOCKS} 8 块齐全 / verify={ok}")
+                    f"{BLOCKS} 8 块齐全 / verify={ok} / degraded={degraded or '-'}")
 
     def _sections(self, ctx: dict, res: TaskResult) -> dict:
         confirmed, review, uncovered = [], [], []

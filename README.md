@@ -3,14 +3,17 @@
 > **标准版本状态**：当前执行 **GB 1350—2009**（限值待人工核对，所有判定结论仅供复核、不得作为放行依据）；GB 1350—2025 为 2027-01-01 才实施的预置版本，未启用。
 >
 > 毕业设计项目 —— 基于领域知识图谱与大语言模型的米粮（稻谷验收）质检辅助智能体
-> 切入场景：**酸价 / 过氧化值异常的判读与根因溯源**
+> 主域：**稻谷（原粮）验收 + 米粮品控日报**；食用油酸价 / 过氧化值那段是**早期架构验证案例**（见下文），已不是主判定链。
 >
-> **当前进度**：W2 Day 12 已完成（2026-10-14）｜成熟度 **L3 知识库驱动**
-> **当前能力**：模型会**自己先查语料库再作答**，答案带标准出处；查不到就拒答；提问混淆了标准体系时还会**主动质疑**
+> **当前进度**：W2 Day 12 完成知识库驱动（2026-10-14）；W3 起主域切换为米粮稻谷验收，2026-11-07 新增**可复用的业务任务层**。
+> **当前能力**：模型会**自己先查语料库再作答**，答案带标准出处；查不到就拒答；提问混淆了标准体系时还会**主动质疑**；业务表可经任务台 / CLI 独立产出带出处的报告。
+> **判定红线**：比较大小、定等、合格与否全部由代码做；当前执行 **GB 1350—2009**（限值待人工核对），所有结论仅供复核、不得作为放行依据。
 
 ---
 
 ## 这个项目要解决什么
+
+> **定位说明**：下面这段食用油酸价实证是毕设的**早期架构验证案例**（Day 2–12），用于证明「模型会编数字」以及「工具 + 代码硬闸门」的必要性，**证据链保留不删**。项目主域现已切换为**米粮（稻谷验收）**，食用油判定链不再作为主线；主域现状见「业务任务与产物」一节。
 
 食用油质检最怕的一件事：**通用大模型会一本正经地编数字**。
 
@@ -36,7 +39,7 @@ FoodQC-Agent 的回答是：**模型负责理解与组织语言，权威数字�
 | 支柱 | 角色 | 本项目实现 | 状态 |
 |---|---|---|---|
 | **大模型** | 脑 | DeepSeek（OpenAI 兼容接口） | ✅ |
-| **记忆** | 知识仓库 | `corpus/` — 18 份国标结构化语料 + `limits.json` | ✅ Day10–11 |
+| **记忆** | 知识仓库 | `corpus/` — 13 个 `.md` 笔记 + `limits.json`（17 个顶层键，含 GB1350-2025 预置） | ✅ Day10–11 |
 | **工具** | 手 | `lookup_from_corpus`（检索语料）、`calc`（计算判定） | ✅ Day4 / Day12 |
 | **Skill** | 工艺规矩 | 四原则 + 代码硬闸门 + 数字溯源校验 | ✅ Day8 / Day12 |
 
@@ -57,7 +60,7 @@ FoodQC-Agent 的回答是：**模型负责理解与组织语言，权威数字�
 | 7 | 版本管理收口 | 仓库规范化 + 提交规范 |
 | 8 | **加固：三道保险 + 代码硬闸门** | `mini_agent_safe.py`（★ 核心） |
 | 9 | Agent 原理补全 | `notes/W2原理笔记.md` |
-| **10** | **记忆支柱①·收语料** | `corpus/` — 18 份国标，PDF 渲染逐格核对 + 4 平台交叉验证 |
+| **10** | **记忆支柱①·收语料** | `corpus/` — 现有 13 个 `.md` 笔记，PDF 渲染逐格核对 + 4 平台交叉验证 |
 | **11** | **记忆支柱②·可检索** | `lookup_from_corpus.py`（关键词召回 + 出处标注 + 中文 2-gram 分词 + 拒答兜底） |
 | **12** | **缝合：把记忆装进 Agent** | `mini_agent_memory.py`（双工具协作 + 数字硬闸门 + chunk 拆分） |
 
@@ -81,11 +84,11 @@ FoodQC-Agent 的回答是：**模型负责理解与组织语言，权威数字�
 ## ★ 亮点二：记忆支柱 —— 从"死表"到"可检索"（Day 10–12）
 
 ### 语料库规模
-`corpus/` 共 **11 个文件**，覆盖 **18 份国家标准**：8 份逐格核对 + 6 份登记索引 + 4 份方法标准正文提炼。
+`corpus/` 现有 **13 个 `.md` 文件**，`corpus/limits.json` 有 **17 个顶层键**（含食用油各标准与 `GB1350-2025` 稻谷预置）。早期文档里的文件数 / 国标份数 / 顶层条目数是当时口径，此处按仓库实际更新；稻谷验收主域的限值只从 `limits.json → GB1350-2025 → 表格 → 表1/表2 → 质量要求` 只读解析。
 
 所有限值均：① 从 PDF 原文**逐格核对**（中文乱码时改用页面渲染 + 视觉核对）；② 用**官方平台交叉验证**（国家食品安全风险评估中心 / 全国标准信息公共服务平台 / 食品伙伴网 / USDA 官方英译版）。
 
-### 关键结论
+### 关键结论（早期食用油架构验证案例，非当前主域）
 > **一级浸出大豆油：酸价 ≤ 0.50 mg/g、过氧化值 ≤ 0.13 g/100g**（GB/T 1535—2026 表 4）
 > ⚠️ **别把 GB 2716 的 3 当成一级的限值** —— GB 2716 是"食用植物油"整体底线，产品标准更严时从产品标准。这也是 Day2 模型答错的根本原因：**它分不清两套标准**。
 
@@ -125,8 +128,24 @@ foodqc-agent/
 ├── mini_agent_safe.py      # ★Day8  加固版：三保险 + 代码硬闸门
 ├── lookup_from_corpus.py   # ★Day11 语料检索工具（召回 + 出处 + 拒答）
 ├── mini_agent_memory.py    # ★Day12 缝合版：双工具 + 数字硬闸门
-├── qc_daily/               # ★W3   品控日报自动化智能体（独立子系统）
-│   ├── agent.py            #   主编排器：采集→校验→分析→报告→导出→推送→审计
+├── qc_daily/               # ★W3   品控日报自动化智能体 + 业务任务层
+│   ├── agent.py            #   A 链主编排器：采集→校验→分析→报告→导出→推送→审计（8 步）
+│   ├── qa.py               #   B 链：_Workflow 五步 + run_qa（stdout 步骤流，供 /agent 解析）
+│   ├── harness.py          #   C 链：4 工具 + 硬闸门 + runs/<batch>/trace.jsonl（供 /app 解析）
+│   ├── intent.py           #   入口意图路由 + 任务理解层（route / llm_route / understand_task）
+│   ├── flags.py            #   contextvars 请求级 LLM 开关
+│   ├── tasks/              #   ★业务任务包（注册表是唯一扩展点）
+│   │   ├── registry.py     #     TaskSpec + TASKS（3 个一等任务 + ask_qa 辅助）
+│   │   ├── request.py      #     TaskRequest 校验与序列化
+│   │   ├── runner.py       #     TaskRunner 状态机 + 独立 input.db + 归集
+│   │   └── report.py       #     8 块任务报告 + __FP__ 指纹
+│   ├── task_cli.py         #   CLI 独立入口（不依赖 Flask）
+│   ├── task_web.py         #   /tasks 任务台 Blueprint + 产物 API
+│   ├── artifacts.py        #   按 run_id 列产物 + 路径白名单
+│   ├── client_ui.py        #   /app 独立对话客户端（自包含页面，保持原样）
+│   ├── knowledge.py        #   知识库核心（扫描 / 上传 / 确认 / 预览）
+│   ├── knowledge_web.py    #   /agent 与 /knowledge Blueprint
+│   ├── knowledge_templates.py / agent_templates.py   # 两个前端模板
 │   ├── collectors.py       #   三系统数据采集（模拟 / HTTP API / SQL）+ 数据校验
 │   ├── analysis.py         #   合格率/缺陷分布/异常批次/趋势 + 预警规则评估
 │   ├── templates.py        #   日报 HTML 模板（打印友好）
@@ -137,24 +156,28 @@ foodqc-agent/
 │   ├── config.py           #   配置系统（产品限值/规则/渠道全部数据驱动）
 │   ├── models.py           #   数据模型（每条记录自带溯源信息）
 │   ├── console.py          #   Windows GBK 控制台安全输出
-│   ├── webapp.py           #   Flask Web 应用（仪表盘/日报/生成/审计）
+│   ├── webapp.py           #   Flask Web 应用（仪表盘/日报/生成/审计 + 三个 Blueprint）
 │   ├── webtemplates.py     #   Web 界面模板（内联 CSS，无 CDN 依赖）
-│   ├── importer.py         #   数据导入：Excel/CSV → SQLite（中文表头自动映射）
+│   ├── importer.py         #   数据导入：Excel/CSV → SQLite（中文表头自动映射 / 宽表翻转）
 │   ├── validate.py         #   录入错误自查：五类规则只标「待人工确认」，不判合格
 │   ├── limits_resolver.py  #   稻谷限值解析：只读 corpus/limits.json，统一 resolve_limit()
-│   └── cli.py              #   命令行入口（run/daemon/backfill/selftest/show/verify/web/import）
+│   └── cli.py              #   命令行入口（run/daemon/backfill/selftest/show/verify/web/import/ask/task）
 ├── qc_daily_config.json    # W3   日报智能体配置（限值与 corpus/limits.json 同源）
-├── corpus/                 # ★Day10 国标语料库（11 个文件 / 18 份国标）
-│   ├── limits.json         #   结构化限值库（16 个顶层条目，供代码读取）
-│   ├── 限值速查_食用油.md
+├── corpus/                 # ★Day10 国标语料库（13 个 .md / limits.json 17 个顶层键）
+│   ├── limits.json         #   结构化限值库（17 个顶层键，供代码只读）
+│   ├── _inbox/             #   知识库上传待核对区（public/ + private/，已 gitignore）
+│   ├── 限值速查_食用油.md  #   早期食用油架构验证案例（保留作证据链）
 │   ├── 标准体系与检索指南.md
 │   ├── 检验方法标准索引.md
 │   ├── GB8955_食用植物油生产卫生规范.md
 │   ├── 安全限量_真菌毒素与污染物.md
 │   ├── GB5009.22_黄曲霉毒素测定.md
 │   └── 感官与溶剂残留_GB5525与GB5009.262.md
+├── samples/                # DEMO 假数据（稻谷验收_假数据.csv，10 行 / 3 批次）
+├── runs/                   # 任务 run 目录（每次独立 input.db / 报告 / trace，已 gitignore）
+├── HOW_IT_WORKS.md         # 大白话流程说明：表进来 → 报告出去 → 人工签字
 ├── qc_daily_data/          # W3   运行时产物（报告/快照/审计日志，已 gitignore）
-├── tests/                  # 回归测试（test_validate.py：6 条，可直接运行，无需 pytest）
+├── tests/                  # 回归测试（test_validate / test_knowledge / test_client / test_tasks）
 ├── docs/                   # 15 张实测证据截图 + 对比图 + 证据索引
 └── notes/                  # 学习笔记（W1 / W2 原理 / 模板）
 ```
@@ -257,7 +280,7 @@ python -m qc_daily web --scheduler
 
 - **中文表头自动识别**：批次号→batch_id、产品名称→product、实测值→value、检验日期→tested_at……
   也兼容英文表头；带单位后缀也能认（`计划产量(t)`、`温度(℃)`）；
-- **宽表质检报表自动翻转**：很多企业的质检报表是"一个批次一行，酸价/过氧化值每项一列"，
+- **宽表质检报表自动翻转**：很多企业的质检报表是"一个批次一行，每个检测项目一列"（早期食用油表是酸价 / 过氧化值；主域稻谷表是出糙率 / 整精米率 / 杂质含量 / 水分含量 / 黄粒米含量 / 谷外糙米含量 / 互混率 7 项），
   导入时自动翻成系统要求的长表（一个批次×一个项目一行）；
 - **JSON 多表一次导入**：`{"production": [...], "quality": [...], "warehouse": [...]}`
   （也认中文键"生产/质检/仓储"）或记录数组；
@@ -327,7 +350,7 @@ python mini_agent_safe.py       #    加固版 Agent（Day8）
 
 ---
 
-## 运行示例（Day 12 实际输出）
+## 运行示例（Day 12 实际输出 · 早期食用油架构验证案例，保留作证据链）
 
 **输入**：依据 GB/T 1535—2026，一级浸出大豆油的酸价限值是多少？若实测 0.62 mg/g，是否合格？
 
@@ -390,6 +413,66 @@ python mini_agent_safe.py       #    加固版 Agent（Day8）
 - `.env`（含 API Key）、`.venv/`、`__pycache__/` 已在 `.gitignore` 中，**不会进入版本库**；克隆后需自行配置 `.env`。
 - **质检场景定位**：Agent 仅作辅助查证，**最终放行权归代码与人工** —— 这是本项目区别于普通 AI 问答类毕设的关键设计。
 - **语料来源**：均为公开发布的国家标准，限值经原文逐格核对与多平台交叉验证，**不含任何企业内控数据或实习数据**。
+
+---
+
+## 业务任务与产物（2026-11-07）
+
+主入口是 **CLI**（停掉 Web 也能独立出报告），Web 任务台只是可视化。三条既有执行链 A / B / C 保持原样，任务层只做薄封装注册，**不重写采集 / 校验 / 判定 / 导出**。
+
+### 三个一等任务
+
+| task_id | 干什么 | 复用哪条链 |
+|---|---|---|
+| `grain_daily_report` | 给若干业务表 → 汇总分析 → 出规范日报与三段式结论 | A `QCDailyAgent.run()` |
+| `grain_batch_judge` | 指定 DEMO 批次逐项判定 + 标准出处 + 三段式 | C `harness.run_harness()` |
+| `quality_record_audit` | 只对录入表做五类疑点自查，不出合格 / 不合格结论 | `validate.validate_records()` |
+
+`ask_qa` 是辅助只读任务（复用 B `qa.run_qa()`，捕获 stdout 落 `answer.txt`，不出 8 块报告），放在任务台「更多」里，不进首页一等列表。
+
+### 一条命令独立出报告
+
+```bash
+.venv/Scripts/python.exe -m qc_daily task --task grain_daily_report \
+  --input samples/稻谷验收_假数据.csv --date 2026-11-05 \
+  --formats html excel --out qc_daily_data/task_runs/
+```
+
+一次任务的全部东西都落在 `<--out>/<run_id>/`（不传 `--out` 时默认项目根 `runs/`）：`request.json`、`input.db`、`inputs/`、`outputs/`、`snapshots/`、`trace.jsonl`、`summary.json`、`verdicts.json`、`report.html`、`audit_entry.json`。HTML 必出，PDF / Excel 失败降级 `partial`；`error` 级校验失败 `failed` 且不发布报告。每次任务只用独立 `input.db`，绝不覆盖 `qc_source.db` 或 `samples/`。
+
+### 四层可复现性（别再拿单次溯源字段做跨运行断言）
+
+| 字段 | 层 | 能否跨运行断言 |
+|---|---|---|
+| `input_digest` | 数据层：`input.db` 三表规范化行 | ✅ 同输入两次一致 |
+| `conclusion_digest` | 结论层：`verdicts.json` 规范化内容 | ✅ 同输入两次一致 |
+| `report_fingerprint` | 产物层：`__FP__` + `audit.verify_report()` | ❌ 仅单次防篡改 |
+| `data_checksum` | 采集层：agent 既有审计字段（含 `extracted_at`） | ❌ 仅单次溯源 |
+
+### 报告 8 块
+
+任务摘要 / 输入清单 / 校验结果 / 指标汇总 / 逐项判定与出处 / 三段式结论（已确认 · 待人工复核 · 未覆盖）/ 人工核对指路 / 留痕与复算。每条结论带标准号 + 表号 + 条款 / 页，检索不到明说未覆盖；末尾固定「结论仅供复核，不得作为放行依据；最终由人签字」。
+
+### Web 任务台
+
+```bash
+.venv/Scripts/python.exe -m qc_daily web --host 127.0.0.1 --port 8000 --no-browser
+```
+
+- `GET /tasks` 任务台；`POST /api/tasks/run` 提交；`GET /api/tasks/<run_id>` 轮询；`GET /api/tasks/<run_id>/artifact/<name>` 只读查看产物。
+- 写操作校验 `web.token` / `QC_WEB_TOKEN`；产物路径走白名单防目录穿越，只回传相对路径；服务只绑 `127.0.0.1`。
+- `/app`、`/agent`、`/knowledge` 全部保留，两套入口并存。
+
+### 新增一个业务任务要改哪几个文件
+
+1. `qc_daily/tasks/registry.py`：加一个 `TaskSpec`（八字段）注册进 `TASKS` —— 这是唯一必须改的既有文件。
+2. 新建 `qc_daily/tasks/sop_<业务>.py`：该业务的 SOP 模块，只负责调用既有引擎能力，不复制采集 / 校验 / 判定 / 导出。
+3. `qc_daily/tasks/runner.py`：**仅**在 `_execute()` 里加一条分派 `if spec.engine == "<新引擎>"`；状态机主干、输入装载、归集、8 块报告都不动。
+4. `qc_daily/intent.py`：往 `_TASK_WORDS` 加该任务的自然语言关键词（可选，用于任务识别）。
+5. `tests/test_tasks.py`：加一条注册表可用 + 一条执行断言。
+6. `README.md`：登记新 task_id 与适用范围。
+
+不要往 `importer.TABLE_COLUMNS` / `ALIASES` 里硬塞第四类表；真要新表类型，走 `TaskSpec` + SOP 模块自己解析。
 
 ---
 

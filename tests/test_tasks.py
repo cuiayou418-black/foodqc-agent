@@ -175,5 +175,101 @@ class TestRiceWideTable(unittest.TestCase):
             shutil.rmtree(tmp, ignore_errors=True)
 
 
+class TestTaskExceptions(unittest.TestCase):
+    """第 7 部分异常分支：表头不认识 / error 级校验 / 导出降级 / 模型回落。"""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.tmp = Path(tempfile.mkdtemp(prefix="foodqc_task_exc_"))
+        cls.cfg = QCDailyConfig.load()
+        cls.cfg.raw["export"]["output_dir"] = str(cls.tmp / "agent_out")
+        cls.out_root = str(cls.tmp / "runs")
+        cls.sample = str(ROOT / "samples" / "稻谷验收_假数据.csv")
+
+    @classmethod
+    def tearDownClass(cls):
+        shutil.rmtree(cls.tmp, ignore_errors=True)
+
+    def _csv(self, name, headers, rows):
+        import csv
+
+        p = self.tmp / name
+        with open(p, "w", encoding="utf-8-sig", newline="") as f:
+            w = csv.writer(f)
+            w.writerow(headers)
+            w.writerows(rows)
+        return p
+
+    def _run(self, path, formats=None):
+        req = TaskRequest(task_id="grain_daily_report", inputs=[str(path)],
+                          report_date="2026-11-05", formats=formats or ["html", "excel"],
+                          output_root=self.out_root)
+        return TaskRunner(config=self.cfg).run(req)
+
+    def test_1_unmapped_headers_rejected_with_trace(self):
+        p = self._csv("unknown.csv", ["foo", "bar", "baz"], [["x", "y", "z"]])
+        res = self._run(p)
+        self.assertEqual(res.status, "failed")
+        self.assertTrue(any("表头" in e for e in res.errors))
+        self.assertTrue(any("无法识别表类型" in n for n in res.notes))
+        self.assertTrue((Path(res.run_dir) / "trace.jsonl").is_file())
+
+    def test_2_validation_error_no_html_but_snapshot_and_trace(self):
+        headers = ["批次号", "产品名称", "检测项目", "实测值", "单位", "指标方向",
+                   "限值", "标准号", "限值出处", "检验日期", "检验员", "班组"]
+        row = ["DEMO-001", "籼稻谷", "出糙率", 76.5, "%", "≥", 0,
+               "GB 1350—2025", "GB 1350—2025 表1 第3等 原文第5页",
+               "2026-11-05", "假检验员", "假班组"]
+        p = self._csv("bad_limit.csv", headers, [row])
+        res = self._run(p, formats=["html"])
+        self.assertEqual(res.status, "failed")
+        self.assertFalse((Path(res.run_dir) / "report.html").exists())
+        self.assertTrue((Path(res.run_dir) / "snapshots").exists())
+        self.assertTrue((Path(res.run_dir) / "trace.jsonl").is_file())
+        self.assertTrue(any("宁可不发" in e for e in res.errors))
+        self.assertTrue(any(a.get("level") == "critical"
+                            and a.get("rule_id") == "data_validation_failed"
+                            for a in res.alerts), res.alerts)
+
+    def test_3_export_failure_degrades_to_partial(self):
+        from unittest import mock
+
+        with mock.patch("qc_daily.agent.export_pdf", side_effect=RuntimeError("模拟 PDF 失败")):
+            res = self._run(self.sample, formats=["html", "pdf"])
+        self.assertEqual(res.status, "partial")
+        self.assertIn("report.html", res.outputs)
+        self.assertTrue(any("导出降级" in e or "PDF" in e for e in res.errors))
+
+    def test_4_model_fallback_to_rules_and_cli_entry(self):
+        import contextlib
+        import io
+
+        from qc_daily import flags, task_cli
+        from qc_daily.intent import understand_task
+
+        token = flags.set_llm(False)
+        try:
+            got = understand_task("帮我把这几张表做成稻谷验收日报", [self.sample])
+            self.assertTrue(got["ok"])
+            self.assertEqual(got["task_id"], "grain_daily_report")
+            self.assertEqual(got["params"]["router"], "rules")
+            self.assertNotIn("limit", str(got["params"]))
+            unknown = understand_task("今天天气怎么样", [])
+            self.assertFalse(unknown["ok"])
+            self.assertEqual(len(unknown["candidates"]), 3)   # 白名单外给候选，不硬猜
+        finally:
+            flags.reset_llm(token)
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            rc = task_cli.execute(task_id="grain_daily_report", inputs=[self.sample],
+                                  report_date="2026-11-05", formats=["html", "excel"],
+                                  output_root=self.out_root)
+        out = buf.getvalue()
+        self.assertEqual(rc, 0)
+        for key in ("run_id", "status", "verify_report", "input_digest", "conclusion_digest"):
+            self.assertIn(key, out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
