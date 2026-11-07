@@ -35,7 +35,8 @@ ALIASES: dict[str, list[str]] = {
     # 生产
     "batch_id":    ["批次号", "批次编码", "批次", "生产批次", "批号", "批次编号", "batch", "batchid",
                     "batch_id", "batch no", "lot", "lot_no", "lotno"],
-    "product":     ["产品", "产品名称", "品名", "油品", "产品类别", "product", "product_name"],
+    "product":     ["产品", "产品名称", "品名", "油品", "产品类别", "稻谷品种", "原粮品种",
+                    "粮种", "product", "product_name"],
     "line":        ["产线", "生产线", "车间", "线别", "line", "workshop", "production_line"],
     "planned_qty": ["计划产量", "计划量", "计划", "planned", "planned_qty", "plan"],
     "actual_qty":  ["实际产量", "产量", "实际", "实际量", "actual", "actual_qty", "output"],
@@ -43,16 +44,17 @@ ALIASES: dict[str, list[str]] = {
                     "start_time", "production_date"],
     "finished_at": ["完工时间", "结束时间", "完工日期", "finish", "finished_at", "end_time"],
     # 质检
-    "item":        ["检测项目", "项目", "指标", "检测指标", "item", "test_item", "indicator"],
+    "item":        ["检测项目", "项目", "指标", "检测指标", "检验项目", "检验指标",
+                    "item", "test_item", "indicator"],
     "value":       ["实测值", "检测值", "测定值", "结果", "测量值", "value", "result", "measured",
                     "test_result"],
-    "unit":        ["单位", "unit", "units"],
+    "unit":        ["单位", "计量单位", "unit", "units"],
     "direction":   ["方向", "指标方向", "direction"],
     "limit_value": ["限值", "标准限值", "限量", "标准值", "limit", "limit_value", "standard_limit"],
     "standard":    ["标准", "标准号", "依据标准", "执行标准", "standard", "std"],
-    "tested_at":   ["检验日期", "检测日期", "检验时间", "检测时间", "tested", "tested_at",
-                    "test_date", "检验日期时间"],
-    "inspector":   ["检验员", "检测人", "检测员", "inspector", "tester"],
+    "tested_at":   ["检验日期", "检测日期", "检验时间", "检测时间", "扦样日期", "tested",
+                    "tested_at", "test_date", "检验日期时间"],
+    "inspector":   ["检验员", "检测人", "检测员", "化验员", "检验人", "inspector", "tester"],
     "lab":         ["实验室", "检测机构", "检测单位", "班组", "检验班组", "班组名",
                     "lab", "laboratory"],
     "limit_source": ["限值出处", "出处", "limit_source"],
@@ -67,10 +69,14 @@ ALIASES: dict[str, list[str]] = {
 }
 
 #: 宽表质检报表中常见的检测项目列名（用于识别"宽表"格式）
+#: 前段是食用油（早期架构验证案例，保留兼容），后段是主域稻谷验收的 7 项数值指标。
+#: 只追加列名，不改 map_headers / detect_type / convert 的任何判定逻辑。
 KNOWN_ITEMS = ["酸价", "过氧化值", "水分及挥发物", "不溶性杂质", "溶剂残留量", "烟点",
                "色泽", "透明度", "气味滋味", "含皂量", "冷冻试验", "加热试验",
                "相对密度", "折光指数", "碘值", "皂化值", "脂肪酸组成", "极性组分",
-               "黄曲霉毒素B1", "铅", "游离羟基"]
+               "黄曲霉毒素B1", "铅", "游离羟基",
+               "出糙率", "整精米率", "杂质含量", "水分含量",
+               "黄粒米含量", "谷外糙米含量", "互混率"]
 
 #: 表类型识别关键词（按 sheet 名 / 文件名）
 TYPE_KEYWORDS = {

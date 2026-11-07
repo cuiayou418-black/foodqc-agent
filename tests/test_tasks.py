@@ -139,5 +139,41 @@ class TestTasksPhase1(unittest.TestCase):
             self.assertTrue((run_dir / name).exists(), name)
 
 
+class TestRiceWideTable(unittest.TestCase):
+    """Phase 2：稻谷宽表识别为 quality，7 项指标都映射上（不重写导入逻辑）。"""
+
+    def test_rice_wide_table_maps_seven_items(self):
+        import csv
+
+        from qc_daily.importer import KNOWN_ITEMS, convert, detect_type, map_headers, read_tabular
+
+        expected = ("出糙率", "整精米率", "杂质含量", "水分含量",
+                    "黄粒米含量", "谷外糙米含量", "互混率")
+        for item in expected:
+            self.assertIn(item, KNOWN_ITEMS)
+        tmp = Path(tempfile.mkdtemp(prefix="foodqc_rice_wide_"))
+        try:
+            p = tmp / "稻谷质检宽表.csv"
+            with open(p, "w", encoding="utf-8-sig", newline="") as f:
+                w = csv.writer(f)
+                w.writerow(["批次号", "产品名称", "检验日期"] + list(expected))
+                w.writerow(["DEMO-001", "籼稻谷", "2026-11-05",
+                            76.5, 45.0, 0.8, 13.2, 0.5, 2.0, 3.0])
+            sheets = read_tabular(str(p))
+            self.assertEqual(len(sheets), 1)
+            records = sheets[0][1]
+            mapping = map_headers(records)
+            self.assertEqual(mapping.get("批次号"), "batch_id")
+            self.assertEqual(mapping.get("产品名称"), "product")
+            self.assertEqual(mapping.get("检验日期"), "tested_at")
+            self.assertEqual(detect_type(p.name, mapping), "quality")
+            rows, notes = convert(p.stem, records, "quality", QCDailyConfig.load())
+            self.assertTrue(any("宽表" in n for n in notes))
+            self.assertEqual(len(rows), 7)
+            self.assertTrue(set(expected).issubset({r["item"] for r in rows}))
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
