@@ -1,7 +1,7 @@
 """知识库（记忆板块） + Agent 工作台 · Web 接口层
 
 以 Blueprint 挂进现有 qc_daily.webapp.create_app()，对现有业务路由零改动。
-页面：/knowledge（Agent 设置 › 记忆）、/agent（对话式演示）
+页面：/knowledge（Agent 设置 › 记忆）；/agent 已废弃，302 到独立客户端 /app。
 接口：知识库查看 / 上传 / 确认 / 预览，Agent 提问。
 
 ⚠️ Agent 提问会捕获 qa.run_qa() 的 stdout；Flask 多线程下用锁串行化，
@@ -16,12 +16,11 @@ import re
 import threading
 from typing import Any
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, redirect, request
 from werkzeug.exceptions import RequestEntityTooLarge
 
 from . import knowledge as kb
 from . import knowledge_templates as kbt
-from . import agent_templates as agt
 
 bp = Blueprint("knowledge", __name__)
 _QA_LOCK = threading.Lock()
@@ -36,7 +35,8 @@ def knowledge_view():
 
 @bp.get("/agent")
 def agent_view():
-    return agt.agent_page()
+    """旧的内嵌式工作台已废弃：统一跳到独立客户端 /app，避免两个同名页面。"""
+    return redirect("/app", code=302)
 
 
 # ------------------------------------------------------------------ 知识库接口

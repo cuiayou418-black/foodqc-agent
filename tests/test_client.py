@@ -87,8 +87,15 @@ class TestClient(unittest.TestCase):
 
     def test_existing_daily_routes_untouched(self):
         """新增客户端不能破坏日报后台。"""
-        for path in ("/", "/reports", "/knowledge", "/agent"):
+        for path in ("/", "/reports", "/knowledge", "/import", "/alerts"):
             self.assertEqual(self.client.get(path).status_code, 200, path)
+
+    def test_old_agent_page_redirects_to_client(self):
+        """旧 /agent 已废弃：必须 302 到独立客户端，不能留两个同名页面。"""
+        r = self.client.get("/agent")
+        self.assertEqual(r.status_code, 302)
+        self.assertTrue(r.headers["Location"].endswith("/app"))
+        self.assertEqual(self.client.get("/agent", follow_redirects=True).status_code, 200)
 
 
 class TestIntentRouter(unittest.TestCase):

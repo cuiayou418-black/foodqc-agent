@@ -473,9 +473,10 @@ def run_server(config: QCDailyConfig | None = None, host: str | None = None,
 
     ip = _lan_ip()
     say("=" * 56)
-    say("品控日报智能体 · Web 服务已启动")
-    say(f"  本机访问   : http://127.0.0.1:{port}/")
-    say(f"  局域网访问 : http://{ip}:{port}/   ← 答辩/演示时其他人用这个地址")
+    say("FoodQC-Agent · Web 服务已启动")
+    say(f"  对话客户端 : http://127.0.0.1:{port}/app   ← 演示/投屏用这个")
+    say(f"  日报后台   : http://127.0.0.1:{port}/")
+    say(f"  局域网访问 : http://{ip}:{port}/app   ← 答辩时其他人用这个地址")
     say(f"  后台调度   : {'已开启（每天自动生成昨日日报）' if with_scheduler else '未开启'}")
     say(f"  登录保护   : {'已开启' if (cfg.web.get('token') or env(cfg.web.get('token_env', 'QC_WEB_TOKEN'))) else '未开启（局域网演示模式）'}")
     say("  停止服务   : Ctrl+C")
@@ -483,7 +484,7 @@ def run_server(config: QCDailyConfig | None = None, host: str | None = None,
 
     if open_browser_flag:
         try:
-            webbrowser.open(f"http://127.0.0.1:{port}/")
+            webbrowser.open(f"http://127.0.0.1:{port}/app")
         except Exception:
             pass
 

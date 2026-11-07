@@ -10,7 +10,7 @@ from . import webtemplates as tpl
 _BODY = """
 <div style="font-size:12px;color:#7b828b;margin-bottom:10px">
   Agent 设置 › <b style="color:#1f2328">知识库 / 记忆</b>
-  &nbsp;·&nbsp; <a href="/agent" style="color:#185fa5;text-decoration:none">返回 Agent 工作台 →</a>
+  &nbsp;·&nbsp; <a href="/app" style="color:#185fa5;text-decoration:none">返回对话客户端 →</a>
   &nbsp;·&nbsp; 这里只管理 Agent 能看到的资料，不改动现有业务功能
 </div>
 

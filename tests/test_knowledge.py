@@ -127,11 +127,17 @@ class TestWeb(unittest.TestCase):
         shutil.rmtree(cls.tmp, ignore_errors=True)
 
     def test_pages_render(self):
-        for path, marker in [("/knowledge", "知识库 / 记忆"), ("/agent", "Agent 工作台")]:
+        for path, marker in [("/knowledge", "知识库 / 记忆")]:
             r = self.client.get(path)
             self.assertEqual(r.status_code, 200, path)
             self.assertIn(marker, r.get_data(as_text=True), path)
             self.assertNotIn("__KB_HEAD__", r.get_data(as_text=True))
+
+    def test_agent_page_moved_to_app(self):
+        """旧 /agent 页面已并入独立客户端 /app，只保留跳转。"""
+        r = self.client.get("/agent")
+        self.assertEqual(r.status_code, 302)
+        self.assertIn("/app", r.headers["Location"])
 
     def test_overview_api(self):
         r = self.client.get("/api/knowledge/overview")

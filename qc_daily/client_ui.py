@@ -157,6 +157,7 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
     <div class="logo"><span class="dot"></span>FoodQC-Agent <span class="ver">HARNESS</span></div>
     <button class="newtask" id="new-conv">＋ 新建任务</button>
     <button class="side-link" id="kb-toggle">≡ 知识库 / 记忆</button>
+    <a class="side-link" href="/" style="display:block;text-decoration:none">⌂ 品控日报后台</a>
     <div class="tabs"><span class="on">任务</span><span>频道</span><span>定时</span></div>
     <div class="side-scroll">
       <div class="group">置顶 <span>▾</span></div>
