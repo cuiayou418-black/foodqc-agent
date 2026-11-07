@@ -72,7 +72,7 @@ class TestClient(unittest.TestCase):
 
     def test_no_absolute_path_leaks(self):
         r = self.client.post("/api/client/chat",
-                             json={"question": "出糙率 3 等限值是多少"})
+                             json={"question": "DEMO-001 这批稻谷出糙率 76.5 能收吗"})
         d = r.get_json()
         self.assertTrue(d["ok"])
         for key in ("trace_path", "summary_path", "report_path"):
@@ -269,7 +269,20 @@ class TestIntentRouter(unittest.TestCase):
 
     def test_judgement_request_goes_to_harness(self):
         self.assertIsNone(self.intent.route("DEMO-001 这批稻谷出糙率 76.5 能收吗"))
-        self.assertIsNone(self.intent.route("出糙率 3 等限值是多少"))
+        # 带指标名和数字的「超标了吗」仍是判定，必须进判定链
+        self.assertIsNone(self.intent.route("水分 14.2 超标了吗"))
+
+    def test_limit_question_is_knowledge_not_judgement(self):
+        """问「X 限值是多少」是查标准，不该被判定链抢走。
+
+        原先「出糙率 3 等限值是多少」会被判成判定请求，回一句「请切到判定模式」，
+        而它正是首页示例卡片里的一句——点了就答非所问。
+        """
+        for q in ("出糙率 3 等限值是多少", "稻谷水分限值是多少", "稻谷杂质限值多少"):
+            r = self.intent.route(q)
+            self.assertIsNotNone(r, f"{q} 不该进判定链")
+            body = " ".join(r["answer"]["lines"])
+            self.assertRegex(body, r"\d", f"{q} 必须给出具体数字")
 
     def test_knowledge_question_has_source(self):
         r = self.intent.route("整精米率和出糙率有什么区别")

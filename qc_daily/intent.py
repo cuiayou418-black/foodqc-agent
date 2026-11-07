@@ -241,8 +241,11 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
                 if len(para) < 20 or not any(t in para for t in terms):
                     continue
                 # 物类闸门：问大米不许拿油脂的段落顶
+                # 例外：整份文件就是讲这个物类时（文件名带「稻谷」），段落里不会逐条重复写，
+                # 不能按段落卡——否则 GB 1350 整份被自己过滤掉，问「稻谷水分限值」直接拒答
                 if cats and not any(c in para for c in cats):
-                    continue
+                    if not any(c in path.name for c in cats):
+                        continue
                 # 表格块按行拆，只留真正命中的那几行，别把整张表糊给用户
                 if para.count("|") > 3:
                     candidates = []
@@ -250,6 +253,10 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
                         if "|" not in ln or not any(t in ln for t in terms):
                             continue
                         clean = _table_cells(ln)
+                        # 整行分等矩阵（≥79.0 · ≥77.0 · ≥75.0 …）去掉了表头就成一串数字，
+                        # 读起来毫无意义；这种行不当作答案，让下面的说明段落顶上
+                        if clean and sum(clean.count(c) for c in ("≥", "≤")) >= 4:
+                            continue
                         if clean:
                             candidates.append(clean)
                     candidates = candidates[:2]
@@ -384,6 +391,15 @@ def route(question: str) -> dict | None:
     has_indicator = any(i in q for i in indicators())
     has_number = bool(re.search(r"\d", q))
     wants_judge = any(w in q for w in _JUDGE_WORDS)
+
+    # 查标准 ≠ 判合格。问「X 限值是多少 / 依据在哪一条」是检索，
+    # 不能因为句子里带了指标名和等级数字，就被判定链抢走
+    # （原先「出糙率 3 等限值是多少」会被判成判定请求，回一句「请切到判定模式」）
+    asks_limit = any(w in q for w in ("限值", "标准值", "限量", "上限", "下限", "依据", "出处"))
+    asks_verdict = any(w in q for w in ("能收", "能不能收", "合格吗", "合不合格",
+                                        "超标", "超了", "怎么判", "判成"))
+    if asks_limit and not asks_verdict and not has_batch:
+        return {"kind": "chat", "answer": knowledge_answer(q)}
 
     # 明确要判定 → 判定链
     if has_batch and (has_indicator or wants_judge or has_number):
