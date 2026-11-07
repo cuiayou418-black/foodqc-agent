@@ -492,22 +492,42 @@ class TaskRunner:
 
     def _sections(self, ctx: dict, res: TaskResult) -> dict:
         confirmed, review, uncovered = [], [], []
-        suspects = {str(s.get("item", "")) for s in (ctx.get("suspects") or [])}
+        # 疑点必须按「批次 × 项目」对，不能只按项目：DEMO-003 的整精米率可疑，
+        # 不能顺带把 DEMO-001 正常的整精米率也标成疑点——假警报会把真警报淹掉
+        sus_list = list(ctx.get("suspects") or [])
+        sus_map = {(str(s.get("batch_id") or ""), str(s.get("item") or "")): s
+                   for s in sus_list}
+        flagged: set[tuple[str, str]] = set()
         for v in (ctx.get("verdicts") or []):
+            key = (str(v.get("batch_id", "")), str(v.get("item", "")))
+            src = f"{v.get('standard','')} {v.get('limit_source','')}".strip()
             line = (f"{v.get('batch_id','')} · {v.get('item','')} "
                     f"{v.get('direction','')}{v.get('limit_value','')} → "
                     f"实测 {v.get('value','')} → 代码判定「{v.get('verdict','')}」"
-                    f"（{v.get('standard','')} {v.get('limit_source','')}）")
-            if v.get("item") in suspects:
-                review.append(f"{v.get('item','')}：该值有录入疑点，结论不可用于放行 → {line}")
+                    f"（{src}）")
+            if key in sus_map:
+                flagged.add(key)
+                # 疑点原因并进同一行，不再单独再列一条同样的话
+                why = str(sus_map[key].get("reason") or "").strip()
+                review.append(f"{v.get('item','')}：该值有录入疑点，结论不可用于放行 → "
+                              + (line[:-1] + f"；疑点：{why}）" if why else line))
             elif v.get("verdict") == "合格":
                 confirmed.append(line)
             else:
                 review.append(line)
             if not v.get("limit_source"):
                 uncovered.append(f"{v.get('item','')}：检索不到条款出处，未覆盖，不推算")
-        for s in (ctx.get("suspects") or []):
-            review.append(f"{s.get('item','')}：{s.get('reason','')}；"
+        # 没对上任何逐项结论的疑点仍然要报（比如整行缺失、字段为空）
+        for s in sus_list:
+            key = (str(s.get("batch_id") or ""), str(s.get("item") or ""))
+            if key in flagged:
+                continue
+            who = str(s.get("batch_id") or "").strip()
+            item = str(s.get("item") or "")
+            why = str(s.get("reason") or "").strip()
+            if item and why.startswith(f"「{item}」"):
+                why = "这格数据" + why[len(f"「{item}」"):]   # 前面已经写了项目名，别重复
+            review.append(f"{who + ' · ' if who and who not in why else ''}{item}：{why}；"
                           f"建议 {s.get('建议动作','')}")
         review.append("标准版本：当前执行 GB 1350—2009，限值尚未人工核对；"
                       "GB 1350—2025 为 2027-01-01 预置，不得用于判旧货")

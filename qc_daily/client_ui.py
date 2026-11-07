@@ -20,6 +20,8 @@ import json
 import os
 import re
 import threading
+from datetime import date
+from pathlib import Path
 from typing import Any
 
 from flask import Blueprint, jsonify, request
@@ -207,6 +209,41 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
 .ctools{display:flex;align-items:center;gap:8px;border-top:1px solid var(--line);padding-top:8px}
 .ctools .sp{flex:1}
 .cbtn{font-size:11px;color:var(--ink2);border:1px solid var(--line);border-radius:12px;padding:2px 9px;cursor:pointer}
+.fchip{font-size:11px;background:#e9f6f0;color:#0f6e56;border-radius:12px;padding:2px 9px;
+max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fchip b{font-weight:600}
+.composer.dragover .cbox{border-color:#b81c22;background:#fef7f7}
+/* 任务卡：对话里的任务不跳页、不刷屏，卡片原地从「在做」变成「做完了」 */
+.tcard{border:1px solid var(--line);border-radius:12px;background:#fff;padding:14px 16px;
+margin:2px 0 14px;max-width:760px}
+.tcard .th{display:flex;align-items:center;gap:9px;margin-bottom:9px}
+.tcard .th b{font-size:13.5px;font-weight:600}
+.tcard .st{font-size:11px;padding:2px 9px;border-radius:11px;background:#eef0f2;color:#6b7280}
+.tcard .st.run{background:#eef4ff;color:#1d4ed8}
+.tcard .st.ok{background:#e9f6f0;color:#0f6e56}
+.tcard .st.warn{background:#fff6e5;color:#8a5a06}
+.tcard .st.bad{background:#fef0ef;color:#a32d2d}
+.tcard .hl{font-size:14.5px;line-height:1.65;color:var(--ink);margin:4px 0 10px}
+.tcard .hl.warn{color:#8a5a06}
+.tcard .al{background:#fff6e5;border-left:3px solid #c2771a;padding:7px 10px;font-size:12.5px;
+margin:7px 0;line-height:1.6;color:#6b4a06}
+.tcard .fs{display:flex;gap:8px;flex-wrap:wrap;margin:12px 0 6px}
+.tcard .fs a{text-decoration:none;font-size:12.5px;padding:8px 15px;border-radius:8px;
+border:1px solid #e6b8b6;color:#b81c22;background:#fff}
+.tcard .fs a.pri{background:#b81c22;color:#fff;border-color:#b81c22}
+.tcard .gp{margin-top:13px}
+.tcard .gp>.gt{font-size:12.5px;font-weight:600;margin-bottom:5px}
+.tcard .gp>.gt .n{font-size:10.5px;font-weight:500;padding:1px 6px;border-radius:9px;
+background:#eef0f2;color:#6b7280;margin-left:6px}
+.tcard .li{font-size:12.5px;line-height:1.7;padding:4px 0 4px 11px;border-left:2px solid #eef0f2;
+color:#374151;margin-bottom:1px}
+.tcard .li .fl{font-size:10.5px;background:#fef0ef;color:#a32d2d;padding:1px 6px;border-radius:4px;margin-right:5px}
+.tcard .li .tp{font-size:10.5px;color:#9ca3af;margin-left:5px;cursor:help}
+.tcard .em{font-size:12px;color:#9ca3af;padding:3px 0 3px 11px}
+.tcard .tech{margin-top:12px;border-top:1px solid #eef0f2;padding-top:9px}
+.tcard .tech summary{font-size:11.5px;color:#9ca3af;cursor:pointer}
+.tcard .tech .in{font-size:11px;color:#6b7280;line-height:1.9;margin-top:6px;
+font-family:Consolas,monospace;word-break:break-all}
 .cbtn:hover{border-color:var(--brand);color:var(--brand)}
 .tag{font-size:11px;color:var(--ink3);border:1px dashed var(--line);border-radius:12px;padding:2px 9px;cursor:default}
 .model{border:1px solid var(--line);background:transparent;color:var(--ink3);font-size:11px;font-family:inherit;border-radius:12px;padding:2px 9px;cursor:pointer}
@@ -276,7 +313,7 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
       </div>
       <div class="wrap-in" id="msgs"></div>
     </div>
-    <div class="composer">
+    <div class="composer" id="composer">
       <div class="cbox">
         <div class="cmdpanel" id="cmd-panel"></div>
         <div class="cbar">
@@ -290,8 +327,11 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
           <button class="hist-btn" id="hist-up" title="上一条提问" disabled>↑</button>
           <button class="hist-btn" id="hist-down" title="下一条提问" disabled>↓</button>
         </div>
-        <textarea id="q" placeholder="描述你要判定的批次 / 想查的标准条款…（Enter 发送，Ctrl+Enter 换行）"></textarea>
+        <textarea id="q" placeholder="说一句话，或者把验收表拖进来…（Enter 发送，Ctrl+Enter 换行）"></textarea>
         <div class="ctools">
+          <span class="cbtn" id="file-btn" title="选一张验收表，或者直接把文件拖到这里">＋ 表格</span>
+          <input type="file" id="q-file" accept=".csv,.xlsx,.xls" style="display:none">
+          <span class="fchip" id="fchip" hidden></span>
           <span class="cbtn" id="kb-toggle2">＋ 知识库</span>
           <span class="tag">只读 · 不放行</span>
           <span class="tag">DEMO-only</span>
@@ -349,7 +389,15 @@ function loadStore(){
 function save(){
  try{
   var trim=sessions.slice(0,12).map(function(s){
-   return {id:s.id,title:s.title,created:s.created,msgs:s.msgs.slice(-40)};
+   return {id:s.id,title:s.title,created:s.created,msgs:s.msgs.slice(-40).map(function(m){
+    // 任务卡的内容不落本地存储（几十 KB 一张，撑爆 5MB 会把所有会话一起弄丢），
+    // 只留 run_id，下次打开按需回读
+    if(m.mode==='task'&&m.data){
+     return {role:m.role,mode:'task',data:{runId:m.data.runId,taskName:m.data.taskName,
+      say:m.data.say,terminal:m.data.terminal,refetch:true}};
+    }
+    return m;
+   })};
   });
   localStorage.setItem(STORE,JSON.stringify(trim));
   localStorage.setItem(ACTIVE,activeId||'');
@@ -382,7 +430,12 @@ function renderMsgs(){
   if(m.role==='user')box.appendChild(buildUser(m.text));
   else if(m.role==='err')box.appendChild(buildErr(m.text));
   else if(m.mode==='chat')box.appendChild(buildChat(m.data.answer||{},m.data.meta||{}));
+  else if(m.mode==='task')box.appendChild(buildTask(m));
+  else if(m.mode==='pick')box.appendChild(buildPick(m));
   else box.appendChild(buildRun(m.data));
+ });
+ list.forEach(function(m){
+  if(m.mode==='task'&&m.data&&m.data.refetch&&!m.data.view)refreshTask(m);
  });
  scrollDown();
 }
@@ -544,8 +597,145 @@ function addAgent(d){
  if(d.mode==='chat'){addChat(d.answer||{},{mode_used:d.mode_used,router:d.router,llm_used:d.llm_used,cps:d.checkpoints});return;}
  push({role:'agent',mode:'run',data:d});renderMsgs();
 }
+
+// ---------------------------------------------------------------- 对话里做任务
+// 一句话 + 一张表 → 后台跑 → 卡片从「正在读表格」原地变成「做完了」+ 下载按钮
+var TFILES=[];
+function renderChip(){
+ var c=el('fchip');if(!c)return;
+ if(!TFILES.length){c.hidden=true;c.innerHTML='';return;}
+ var f=TFILES[0];
+ c.hidden=false;
+ c.innerHTML='<b>'+esc(f.name)+'</b> '+esc(f.rows)+' 行'+
+  (TFILES.length>1?' · 共 '+TFILES.length+' 个':'')+
+  ' <span id="fchip-x" style="cursor:pointer;color:#a32d2d;font-weight:600">×</span>';
+ var x=el('fchip-x');if(x)x.onclick=function(){TFILES=[];renderChip();};
+}
+async function uploadTable(f){
+ if(!f)return;
+ el('fchip').hidden=false;el('fchip').textContent='正在读 '+f.name+'…';
+ var fd=new FormData();fd.append('file',f);
+ try{
+  var r=await fetch('/api/tasks/upload',{method:'POST',body:fd});
+  var d=await r.json();
+  if(!r.ok||!d.ok)throw new Error(d.error||('HTTP '+r.status));
+  TFILES.push({path:d.path,name:d.name,rows:d.rows,date:d.data_date||''});
+  renderChip();
+  toast('已读入 '+d.name+'（'+d.rows+' 行'+(d.data_date?'，日期 '+d.data_date:'')+'），说一句要做什么');
+ }catch(e){el('fchip').hidden=true;addErr('这张表没读进来：'+e.message);}
+}
+async function sendTask(q,taskId,label){
+ var txt=q||(label?('就按「'+label+'」做'):'把这张表做成今天的验收日报');
+ var body={question:txt,files:TFILES.map(function(f){return f.path;})};
+ if(taskId)body.task_id=taskId;
+ addUser(txt);pushHistory(txt);
+ var b=el('send');b.disabled=true;b.textContent='…';
+ try{
+  var r=await fetch('/api/client/task',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify(body)});
+  var d=await r.json();
+  if(!r.ok||!d.ok)throw new Error(d.error||('HTTP '+r.status));
+  if(d.need==='choose'){push({role:'agent',mode:'pick',data:d});renderMsgs();return;}
+  TFILES=[];renderChip();
+  push({role:'agent',mode:'task',data:{runId:d.run_id,taskName:d.task_name,
+    say:d.say+'　数据日期取自'+d.date_from+'。',view:null,terminal:false}});
+  renderMsgs();
+  pollTask(cur().msgs[cur().msgs.length-1]);
+ }catch(e){addErr('任务没跑起来：'+e.message);}
+ finally{b.disabled=false;b.textContent='↑';el('q').value='';closeCmd();el('q').focus();}
+}
+function refreshTask(m){
+ if(!m.data||m.data._busy)return;
+ m.data._busy=true;
+ fetch('/api/client/task/'+encodeURIComponent(m.data.runId)).then(function(r){return r.json();})
+  .then(function(d){
+   delete m.data._busy;
+   if(!d.ok)throw new Error(d.error||'读不到');
+   m.data.view=d.view;m.data.terminal=!!d.terminal;m.data.refetch=false;
+   renderMsgs();
+  }).catch(function(){delete m.data._busy;});
+}
+function pollTask(m){
+ var tick=0;
+ var timer=setInterval(function(){
+  tick++;
+  fetch('/api/client/task/'+encodeURIComponent(m.data.runId)).then(function(r){return r.json();})
+   .then(function(d){
+    if(!d.ok)throw new Error(d.error||'读不到状态');
+    m.data.view=d.view;m.data.terminal=!!d.terminal;
+    renderMsgs();
+    if(d.terminal){clearInterval(timer);save();}
+   }).catch(function(e){
+    clearInterval(timer);
+    m.data.err='任务状态读不到了：'+e.message;
+    renderMsgs();
+   });
+  if(tick>240)clearInterval(timer);
+ },1200);
+}
+function buildTask(m){
+ var v=m.data.view||{};
+ var done=!!m.data.terminal;
+ var tone=done?(v.status_tone||'ok'):'run';
+ var st=done?(v.status_cn||'做完了'):'正在做';
+ var hl=done?(v.headline||''):(m.data.say||'正在读表…');
+ var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div>'+
+  '<div class="tcard"><div class="th"><b>'+esc(m.data.taskName||v.task_name||'任务')+'</b>'+
+  '<span class="st '+esc(tone)+'">'+esc(st)+'</span></div>'+
+  '<div class="hl'+(done&&v.headline_tone==='warn'?' warn':'')+'">'+esc(hl)+'</div>';
+ (v.alerts||[]).forEach(function(a){h+='<div class="al">'+esc(a)+'</div>';});
+ if(m.data.err)h+='<div class="al">'+esc(m.data.err)+'</div>';
+ if((v.files||[]).length){
+  h+='<div class="fs">';
+  v.files.forEach(function(f){
+   h+='<a class="'+(f.primary?'pri':'')+'" href="'+esc(f.href)+'" target="_blank">'+esc(f.label)+'</a>';
+  });
+  h+='</div>';
+ }
+ (v.groups||[]).forEach(function(g){
+  if(!g.count)return;
+  h+='<div class="gp"><div class="gt">'+esc(g.label)+'<span class="n">'+g.count+'</span></div>';
+  (g.items||[]).forEach(function(it){
+   h+='<div class="li">'+(it.flag?'<span class="fl">'+esc(it.flag)+'</span>':'')+esc(it.text)+
+    (it.tip?'<span class="tp" title="'+esc(it.tip)+'">出处</span>':'')+'</div>';
+  });
+  h+='</div>';
+ });
+ if(done&&!(v.groups||[]).some(function(g){return g.count;})){
+  h+='<div class="em">这次没有可读的逐条结论，展开下面技术信息看原因。</div>';
+ }
+ var t=v.tech||{};
+ h+='<details class="tech"><summary>技术信息（复核用）</summary><div class="in">'+
+  'run_id　'+esc(t.run_id||m.data.runId)+'<br>'+
+  (t.digests||[]).map(function(d){return esc(d[0])+'　'+esc(d[1]);}).join('<br>')+
+  ((t.all_files||[]).length?'<br>产物　'+esc(t.all_files.join(' / ')):'')+
+  '</div></details>';
+ h+='</div></div>';
+ var tp=document.createElement('template');tp.innerHTML=h;return tp.content;
+}
+function buildPick(m){
+ var d=m.data;
+ var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+
+  '<div class="prose"><p>'+esc(d.reason||'选一个：')+'</p></div>'+
+  '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">';
+ (d.candidates||[]).forEach(function(c,i){
+  h+='<button class="cbtn picksel" data-i="'+i+'" style="padding:7px 13px">'+esc(c.name)+'</button>';
+ });
+ h+='</div></div></div>';
+ var tp=document.createElement('template');tp.innerHTML=h;
+ tp.content.querySelectorAll('.picksel').forEach(function(b){
+  b.onclick=function(){
+   var c=d.candidates[+b.dataset.i];
+   b.disabled=true;b.textContent=c.name+'（已选）';
+   sendTask(null,c.task_id,c.name);
+  };
+ });
+ return tp.content;
+}
 async function send(q){
- q=String(q||'').trim();if(!q)return;
+ q=String(q||'').trim();
+ if(!q&&!TFILES.length)return;
+ if(TFILES.length){return sendTask(q||null);}
  addUser(q);pushHistory(q);
  var b=el('send');b.disabled=true;b.textContent='…';
  try{
@@ -580,6 +770,7 @@ async function upload(){
  }catch(e){el('k-msg').textContent='上传失败：'+e.message;}
 }
 var CARDS=[
+ {ic:'▦',t:'把表格做成日报',d:'拖一张验收表进来，直接出报告',file:true},
  {ic:'◈',t:'判定一批稻谷',d:'逐项判 7 项指标，带 GB 出处',q:CHIPS[1]},
  {ic:'◇',t:'录入错误自查',d:'5 类可疑数，只标疑点不改数',q:CHIPS[2]},
  {ic:'▤',t:'查标准依据',d:'从 corpus 检索带出处条款',q:CHIPS[4]},
@@ -588,7 +779,11 @@ var CARDS=[
 CARDS.forEach(function(c){
  var b=document.createElement('button');b.className='wcard';
  b.innerHTML='<span class="ic">'+c.ic+'</span><b>'+esc(c.t)+'</b><small>'+esc(c.d)+'</small>';
- b.onclick=function(){send(c.q);};el('wcards').appendChild(b);
+ b.onclick=function(){
+  if(c.file){toast('选一张 Excel 或 CSV，选完直接说一句要做什么');el('q-file').click();return;}
+  send(c.q);
+ };
+ el('wcards').appendChild(b);
 });
 var TOAST_T=null;
 function toast(msg){
@@ -754,6 +949,21 @@ async function loadState(){
 el('kb-toggle').onclick=toggleKB;
 el('kb-toggle2').onclick=toggleKB;
 el('send').onclick=function(){send(el('q').value);};
+el('file-btn').onclick=function(){el('q-file').click();};
+el('q-file').onchange=function(){uploadTable(this.files[0]);this.value='';};
+(function(){
+ var cz=el('composer');
+ ['dragenter','dragover'].forEach(function(ev){
+  cz.addEventListener(ev,function(e){e.preventDefault();cz.classList.add('dragover');});
+ });
+ ['dragleave','drop'].forEach(function(ev){
+  cz.addEventListener(ev,function(e){e.preventDefault();cz.classList.remove('dragover');});
+ });
+ cz.addEventListener('drop',function(e){
+  var f=e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files[0];
+  if(f)uploadTable(f);
+ });
+})();
 el('q').addEventListener('keydown',function(e){
  if(CMD_OPEN){
   if(e.key==='ArrowDown'){e.preventDefault();CMD_SEL=Math.min(CMD_SEL+1,CMD_LIST.length-1);renderCmd();return;}
@@ -1081,6 +1291,122 @@ def client_chat():
         })
     finally:
         flags.reset_llm(token)
+
+
+# ------------------------------------------------------------------ 对话里做任务
+# 目标：在同一个输入框里，拖一张表 + 说一句话 → 后台跑 → 结果原地变成可下载的卡片。
+# 边界：只吃上传目录里的表（防任意路径读取）；判定仍走 task runner，不在这里另写一套。
+
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+_UPLOAD_ROOT = (_REPO_ROOT / "qc_daily_data" / "task_uploads").resolve()
+_INPUT_EXT = {".csv", ".xlsx", ".xls"}
+#: 对话端的默认交付物：网页看 + Excel 存。PDF 导出当前不产出，硬配会变成「只做了一部分」
+_CHAT_FORMATS = ["html", "excel"]
+#: 只吃上传表的两件事。批次判定读的是内置 DEMO，附表时不能放进来（会拿假数据冒充你的表）
+_FILE_TASKS = ("grain_daily_report", "quality_record_audit")
+
+
+def _pretty_name(p) -> str:
+    """上传时加了时间戳前缀防重名，显示时去掉，别让人看见一串数字。"""
+    return re.sub(r"^\d{8}-\d{6}_", "", Path(p).name)
+
+
+def _safe_inputs(raw: list) -> tuple[list[str], str]:
+    """把前端传来的路径收敛到上传目录内，越界一律拒。"""
+    out: list[str] = []
+    for item in raw or []:
+        p = Path(str(item)).expanduser()
+        p = (p if p.is_absolute() else (_REPO_ROOT / p)).resolve()
+        try:
+            p.relative_to(_UPLOAD_ROOT)
+        except ValueError:
+            return [], f"只接受通过「＋ 表格」上传的文件，这个路径不在上传目录里：{p.name}"
+        if p.suffix.lower() not in _INPUT_EXT:
+            return [], f"只收 Excel / CSV，你给的是 {p.suffix or '(无扩展名)'}"
+        if not p.is_file():
+            return [], f"文件已经不在了：{p.name}"
+        out.append(str(p))
+    return out, ""
+
+
+@client_bp.post("/api/client/task")
+def client_task_start():
+    """一句话 + 若干张表 → 白名单任务。识别不了就回候选，不硬猜。"""
+    from . import intent
+    from . import task_web
+    from .tasks.registry import TASKS
+    from .tasks.request import TaskRequest
+
+    data = request.get_json(silent=True) or {}
+    question = str(data.get("question") or "").strip()[:300]
+    inputs, err = _safe_inputs(data.get("files") or [])
+    if err:
+        return jsonify({"ok": False, "error": err}), 400
+    if not inputs:
+        return jsonify({"ok": False, "error": "还没收到表格"}), 400
+
+    pick = str(data.get("task_id") or "").strip()
+    if pick:
+        if pick not in _FILE_TASKS:
+            return jsonify({"ok": False, "error": f"这个任务不吃上传的表：{pick}"}), 400
+        got = {"ok": True, "task_id": pick, "params": {"inputs": inputs, "router": "pick"}}
+    else:
+        got = intent.understand_task(question, inputs)
+        if got.get("ok") and got.get("task_id") not in _FILE_TASKS:
+            return jsonify({
+                "ok": True, "need": "choose",
+                "reason": ("「逐项判定」现在读的是内置 DEMO 假批次，不会用你上传的表——"
+                           "拿假数据答你的表，比答不出来更糟。要判表里的批次，用「出验收日报」，"
+                           "它按批逐项判，结论一样带出处。"),
+                "candidates": [c for c in intent.understand_task("", [])["candidates"]
+                               if c["task_id"] in _FILE_TASKS],
+                "files": [_pretty_name(p) for p in inputs],
+            })
+        if not got.get("ok"):
+            return jsonify({
+                "ok": True, "need": "choose",
+                "reason": got.get("reason") or "没看明白要做什么，选一个：",
+                "candidates": [c for c in (got.get("candidates") or [])
+                               if c["task_id"] in _FILE_TASKS],
+                "files": [_pretty_name(p) for p in inputs],
+            })
+
+    task_id = got["task_id"]
+    # 日期从表里读，读不到才用今天。让使用人填日期 = 填错就出一份空报告，且他不知道怪谁
+    rows, data_date = task_web._peek_table(Path(inputs[0]))
+    report_date = data_date or date.today().isoformat()
+    try:
+        req = TaskRequest(task_id=task_id, inputs=inputs, report_date=report_date,
+                          formats=list(_CHAT_FORMATS), output_root="runs", push=False)
+        req.validate(TASKS.keys())
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"{type(e).__name__}: {str(e)[:200]}"}), 400
+
+    run_id = task_web.start_background(req)
+    return jsonify({
+        "ok": True, "run_id": run_id, "task_id": task_id,
+        "task_name": TASKS[task_id].name,
+        "report_date": report_date,
+        "date_from": ("表里的日期" if data_date else "表里没读到日期，按今天算"),
+        "rows": rows,
+        "inputs": [_pretty_name(p) for p in inputs],
+        "say": (f"读到你给的 {_pretty_name(inputs[0])}（{rows} 行，数据日期 {report_date}），"
+                f"按「{TASKS[task_id].name}」开始做。"),
+    })
+
+
+@client_bp.get("/api/client/task/<run_id>")
+def client_task_status(run_id: str):
+    """轮询一张任务卡的全部内容。前端只渲染，不再自己判业务。"""
+    from . import task_web
+    from .tasks.runner import TERMINAL
+
+    d = task_web._status(run_id)
+    if not d:
+        return jsonify({"ok": False, "error": "没找到这次执行"}), 404
+    view = task_web._build_view(d, run_id)
+    return jsonify({"ok": True, "view": view, "terminal": d.get("status") in TERMINAL,
+                    "run_id": run_id})
 
 
 @client_bp.get("/api/client/state")
