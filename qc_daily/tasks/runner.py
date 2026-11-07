@@ -98,8 +98,9 @@ class TaskRunner:
         self._trace(res, state, "state_change", detail)
 
     # ---------------------------------------------------------------- 主入口
-    def run(self, req: TaskRequest) -> TaskResult:
-        run_id = f"T{date.today():%Y%m%d}-{uuid.uuid4().hex[:10]}"
+    def run(self, req: TaskRequest, run_id: str | None = None) -> TaskResult:
+        # 可选 run_id：Web 需要先返回 run_id 再轮询，CLI 不传则由本层生成。
+        run_id = run_id or f"T{date.today():%Y%m%d}-{uuid.uuid4().hex[:10]}"
         run_dir = self._run_dir(req, run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
         res = TaskResult(run_id=run_id, task_id=req.task_id, report_date=req.report_date,

@@ -149,6 +149,7 @@ function startRun() {
 def page(title: str, active: str, body: str, meta: str = "", extra_js: str = "") -> str:
     """整页框架：顶栏导航 + 内容区 + 页脚。"""
     nav_items = [("/", "仪表盘", "dashboard"), ("/app", "对话客户端", "app"),
+                 ("/tasks", "任务 / 产物", "tasks"),
                  ("/reports", "日报列表", "reports"),
                  ("/import", "数据导入", "import"), ("/alerts", "预警记录", "alerts"),
                  ("/audit", "审计日志", "audit"),

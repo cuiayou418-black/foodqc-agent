@@ -258,6 +258,10 @@ def create_app(config: QCDailyConfig, with_scheduler: bool = False) -> Flask:
     from .client_ui import client_bp
     app.register_blueprint(client_bp)
 
+    # 业务任务台 /tasks：只加 2 行注册，现有业务路由零改动
+    from .task_web import task_bp
+    app.register_blueprint(task_bp)
+
     runner = JobRunner(config)
     import_runner = ImportJobRunner(config)
     token = config.web.get("token") or env(config.web.get("token_env", "QC_WEB_TOKEN"))
