@@ -18,6 +18,7 @@ import contextlib
 import io
 import json
 import os
+import re
 import threading
 from typing import Any
 
@@ -141,6 +142,16 @@ details[open] summary:before{content:"▾ "}
 .rview[hidden]{display:none}
 .evlist{border:1px solid var(--line);border-radius:8px;background:var(--code);margin-bottom:8px}
 .evlist .ev:first-child{border-top:0}
+.prose{font-size:13.5px;line-height:1.85;color:var(--ink);max-width:720px}
+.prose p{margin:0 0 9px}
+.prose p:last-child{margin-bottom:0}
+.toggles{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.tg{border:1px solid var(--line);background:var(--panel);color:var(--ink2);font-family:inherit;font-size:11.5px;border-radius:14px;padding:4px 12px;cursor:pointer}
+.tg:hover{border-color:var(--brand);color:var(--brand)}
+.tg.on{background:var(--brand-soft);color:var(--brand);border-color:var(--brand)}
+.pane{margin-top:12px}
+.pane[hidden]{display:none}
+.footline{margin-top:13px;padding-top:9px;border-top:1px solid var(--line);font-size:10.5px;color:var(--ink3);line-height:1.7}
 .trace{margin-top:8px;font-size:11px;color:var(--ink3);font-family:Consolas,monospace}
 .composer{flex:0 0 auto;padding:8px 26px 16px}
 .cbox{position:relative;max-width:860px;margin:0 auto;border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:10px 14px 9px}
@@ -375,17 +386,24 @@ function tri(title,cls,arr){
  return '<div class="'+cls+'"><b>'+title+'</b><ul>'+lis+'</ul></div>';
 }
 function buildChat(a,meta){
- var mt=(meta&&meta.mode_used)?('<div class="meta"><span>模式 '+esc(MODE_LABEL[meta.mode_used]||meta.mode_used)+'</span>'+
-  '<span>路由 '+(meta.router==='llm'?'模型识别':(meta.router==='mode'?'模式强制':'规则'))+'</span>'+
-  '<span>模型 '+(meta.llm_used?'已调用':'未调用')+'</span></div>'):'';
- var lines=(a.lines||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('');
+ var foot=(meta&&meta.mode_used)?('<div class="footline">模式 '+esc(MODE_LABEL[meta.mode_used]||meta.mode_used)+' · '+
+  (meta.router==='llm'?'模型识别':(meta.router==='mode'?'模式强制':'规则路由'))+
+  ' · 模型 '+(meta.llm_used?'已调用':'未调用')+'</div>'):'';
+ var isProse=!!a.prose;
+ var lines=isProse
+  ? (a.lines||[]).map(function(x){return '<p>'+esc(x)+'</p>';}).join('')
+  : (a.lines||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('');
+ var body=isProse
+  ? '<div class="prose" style="font-size:13px">'+lines+'</div>'
+  : '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7">'+lines+'</ul>';
  var bd=(a.boundary||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('');
  var ex=(a.examples||[]).map(function(x){return '<button class="chip" data-q="'+esc(x)+'">'+esc(x)+'</button>';}).join('');
- var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+mt+
-  '<div class="h3" style="font-size:14px;margin:0 0 9px;margin-top:'+(mt?'8px':'0')+'">'+esc(a.title)+'</div>'+
-  '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7">'+lines+'</ul>'+
-  (bd?'<div class="disclaim" style="margin-top:11px"><ul style="margin:0;padding-left:16px">'+bd+'</ul></div>':'')+
+ var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+
+  '<div class="h3" style="font-size:14px;margin:0 0 10px">'+esc(a.title)+'</div>'+
+  body+
+  (bd?'<div class="disclaim"><ul style="margin:0;padding-left:16px">'+bd+'</ul></div>':'')+
   (ex?'<div class="h3">试试这样问</div><div class="chips" style="margin:0">'+ex+'</div>':'')+
+  foot+
  '</div></div>';
  var t=document.createElement('template');t.innerHTML=h;
  t.content.querySelectorAll('[data-q]').forEach(function(b){b.onclick=function(){send(b.dataset.q);};});
@@ -397,35 +415,52 @@ function buildRun(d){
    return '<div class="ev"><span class="nm">'+esc(x.tool)+' ('+esc(JSON.stringify(x.args||{}))+')</span>'+
           '<span class="rs">'+esc(x.result_brief||'')+'</span></div>';
  }).join('')||'<div class="cn">本次没有工具调用留痕</div>';
- var s=d.sections||{};
- var conclusion='<div class="h3">三段式输出</div><div class="tri">'+
+ var s=d.sections||{},brief=d.brief||{},c=brief.counts||{};
+ var paras=(brief.paras||[]).map(function(x){return '<p>'+esc(x)+'</p>';}).join('')
+   ||'<p>逐项判定跑完了，明细在下面。</p>';
+ var total=(c.confirmed||0)+(c.review||0)+(c.uncovered||0);
+ var detail='<div class="h3" style="margin-top:0">三段式输出</div><div class="tri">'+
    tri('已确认','a',s['已确认'])+tri('待人工复核','b',s['待人工复核'])+tri('未覆盖','c',s['未覆盖'])+
   '</div>'+
-  '<div class="disclaim">结论仅供复核，不得作为放行依据；最终由人签字。模型不算数，数字由代码算。</div>'+
-  '<div class="trace">留痕 '+esc(d.trace_path)+'　|　'+esc(d.report_path||'（本次未生成报告）')+'</div>';
+  '<div class="disclaim">结论仅供复核，不得作为放行依据；最终由人签字。模型不算数，数字由代码算。</div>';
  var trace='<div class="evlist">'+ev+'</div>'+
   '<div class="disclaim">以上每一步都是真实调用；模型只决定调哪个工具，不产数字、不定结论。</div>';
+ var foot=esc(d.batch_id)+' · '+esc(d.steps)+' 步 · '+
+  (d.router==='llm'?'模型识别':(d.router==='mode'?'模式强制':'规则路由'))+
+  ' · 模型 '+(d.llm_used?'已调用':'未调用')+' · '+esc(d.data_scope||'DEMO-only')+
+  (d.trace_path?'<br>留痕 '+esc(d.trace_path)+(d.report_path?'　|　'+esc(d.report_path):''):'');
  var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+
-  '<div class="meta"><span>模式 '+esc(MODE_LABEL[d.mode_used]||d.mode_used||'自动')+'</span>'
-   +'<span>路由 '+(d.router==='llm'?'模型识别':(d.router==='mode'?'模式强制':'规则'))+'</span>'
-   +'<span>批次 '+esc(d.batch_id)+'</span><span>终止 '+esc(d.stop_reason)+'</span>'+
-  '<span>步骤 '+esc(d.steps)+'</span><span>LLM '+(d.llm_used?'启用':'关闭')+'</span>'+
-  '<span>'+esc(d.data_scope||'DEMO-only')+'</span></div>'+
-  '<div class="rtabs"><button data-v="conclusion" class="on">结论</button>'+
-   '<button data-v="trace">执行过程（'+esc(n)+'）</button></div>'+
-  '<div class="rview" data-v="conclusion">'+conclusion+'</div>'+
-  '<div class="rview" data-v="trace" hidden>'+trace+'</div>'+
+  '<div class="prose">'+paras+'</div>'+
+  '<div class="toggles">'+
+   '<button class="tg" data-p="detail">逐项明细（'+esc(total)+'）▾</button>'+
+   '<button class="tg" data-p="trace">执行过程（'+esc(n)+'）▾</button>'+
+  '</div>'+
+  '<div class="pane" data-p="detail" hidden>'+detail+'</div>'+
+  '<div class="pane" data-p="trace" hidden>'+trace+'</div>'+
+  '<div class="footline">'+foot+'</div>'+
  '</div></div>';
  var t=document.createElement('template');t.innerHTML=h;
- t.content.querySelectorAll('.rtabs button').forEach(function(b){
-  b.onclick=function(){switchRunView(b.parentNode,b.dataset.v);};
+ t.content.querySelectorAll('.tg').forEach(function(b){
+  b.onclick=function(){togglePane(b);};
  });
  return t.content;
 }
-function switchRunView(tabs,v){
- tabs.querySelectorAll('button').forEach(function(b){b.classList.toggle('on',b.dataset.v===v);});
- var card=tabs.parentNode;
- card.querySelectorAll('.rview').forEach(function(x){x.hidden=(x.dataset.v!==v);});
+function togglePane(b){
+ var card=b.parentNode.parentNode,key=b.dataset.p;
+ var pane=card.querySelector('.pane[data-p="'+key+'"]');
+ if(!pane)return;
+ var closing=!pane.hidden;
+ pane.hidden=closing;
+ b.classList.toggle('on',!closing);
+ b.textContent=b.textContent.replace(/[▾▴]/,closing?'▾':'▴');
+}
+function showRunPane(card,key){
+ var b=card.querySelector('.tg[data-p="'+key+'"]');
+ if(!b)return;
+ var pane=card.querySelector('.pane[data-p="'+key+'"]');
+ if(pane&&pane.hidden){pane.hidden=false;b.classList.add('on');
+  b.textContent=b.textContent.replace(/[▾▴]/,'▴');}
+ if(pane)pane.scrollIntoView({behavior:'smooth',block:'center'});
 }
 function addUser(txt){push({role:'user',text:txt});renderMsgs();}
 function addErr(txt){push({role:'err',text:txt});renderMsgs();}
@@ -530,12 +565,13 @@ function execCmd(i){
  c.run();
 }
 function showLastTrace(){
- var tabs=el('msgs').querySelectorAll('.rtabs');
- if(!tabs.length){toast('这个对话还没跑过判定，先发一句 DEMO- 批次');return;}
- var last=tabs[tabs.length-1];
- switchRunView(last,'trace');
- last.scrollIntoView({behavior:'smooth',block:'center'});
- toast('已切到最近一次的执行过程');
+ var last=null;
+ el('msgs').querySelectorAll('.card').forEach(function(c){
+  if(c.querySelector('.tg[data-p="trace"]'))last=c;
+ });
+ if(!last){toast('这个对话还没跑过判定，先发一句 DEMO- 批次');return;}
+ showRunPane(last,'trace');
+ toast('已展开最近一次的执行过程');
 }
 
 function toggleKB(){var b=el('kb-box');b.style.display=(b.style.display==='none'?'block':'none');}
@@ -680,6 +716,52 @@ loadKB();loadState();
 </body>
 </html>
 """
+
+
+def _brief(result: dict) -> dict:
+    """把三段式内部结构压成一段能读的话。
+
+    数字只来自 sections 的条数统计，措辞是固定模板，模型不参与。
+    重要：这里依然不给「能收/不能收」——恰恰相反，要说清为什么不给。
+    """
+    s = result.get("sections") or {}
+    ok = [str(x) for x in (s.get("已确认") or [])]
+    rv = [str(x) for x in (s.get("待人工复核") or [])]
+    ms = [str(x) for x in (s.get("未覆盖") or [])]
+    passed = sum(1 for x in ok if "判定「合格」" in x)
+    suspect = next((x for x in rv if "录入疑点" in x), "")
+    version = next((x for x in rv if "标准版本" in x), "")
+
+    m = re.match(r"^([^：:]+)[：:]", suspect)
+    ind = m.group(1).strip() if m else "有一项指标"
+    batch = result.get("batch_id") or "这个批次"
+
+    paras: list[str] = []
+    if passed:
+        paras.append(f"{batch} 我逐项比过了，{passed} 项数值按代码判定落在限值内。")
+    else:
+        paras.append(f"{batch} 的逐项判定跑完了，明细在下面。")
+    if suspect:
+        paras.append(
+            f"{ind}那格填的数不对劲：百分类不该超过 100，看着像小数点或单位敲错了。"
+            "这条我只标了疑点，没拿去判合格不合格，麻烦翻一下原始记录核对。"
+        )
+    if version:
+        vers = re.findall(r"GB\s*1350[—-]\d{4}", version)
+        if len(vers) >= 2:
+            paras.append(
+                f"还有个前提得说在前面：现在执行的是 {vers[0]}，语料里的 {vers[1]} 还没实施，"
+                "限值也还没人工核对过。"
+            )
+        else:
+            paras.append("还有个前提：当前执行的版本与语料里的新版不是一回事，限值也还没人工核对过。")
+    paras.append("所以我不给「能收 / 不能收」，这里只摆事实和待复核的原因，放行得你复核完签字。")
+
+    return {
+        "paras": paras,
+        "counts": {"confirmed": len(ok), "review": len(rv),
+                   "uncovered": len(ms), "passed": passed},
+    }
 
 
 def _relative(path: str) -> str:
@@ -844,6 +926,7 @@ def client_chat():
             "llm_state": state,
             "question": question,
             "batch_id": result.get("batch_id", ""),
+            "brief": _brief(result),
             "stop_reason": result.get("stop_reason", ""),
             "steps": result.get("steps", 0),
             "tools_called": result.get("tools_called", []),

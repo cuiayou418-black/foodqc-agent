@@ -113,6 +113,27 @@ class TestClient(unittest.TestCase):
         # DeepSeek 从静态 span 升级为真按钮
         self.assertNotIn('<span class="model">', html)
 
+    def test_concept_question_gets_human_answer(self):
+        """概念问答给固定人话，不再把 markdown 表格行原样糊给用户。"""
+        d = self.client.post("/api/client/chat", json={
+            "question": "整精米率和出糙率有什么区别", "mode": "lookup"}).get_json()
+        a = d["answer"]
+        self.assertTrue(a.get("prose"))
+        self.assertNotIn("业务知识检索", a["title"], "标题不该复读问题")
+        text = "".join(a["lines"])
+        self.assertIn("出糙率", text)
+        self.assertIn("整精米率", text)
+        self.assertNotIn("|---", text)
+        self.assertFalse(text.startswith("["), "不该再挂 [文件名] 日志前缀")
+
+    def test_limit_lookup_still_finds_table_but_readable(self):
+        """限值问答仍要能命中表格，但要转成能读的一行，不是原始 markdown。"""
+        d = self.client.post("/api/client/chat", json={
+            "question": "出糙率 3 等限值是多少", "mode": "lookup"}).get_json()
+        text = "".join(d["answer"]["lines"])
+        self.assertNotIn("|---", text)
+        self.assertNotIn("业务知识检索", d["answer"]["title"])
+
     def test_mode_chat_does_not_enter_chain(self):
         d = self.client.post("/api/client/chat", json={
             "question": "DEMO-001 这批稻谷出糙率 76.5 能收吗", "mode": "chat"}).get_json()
@@ -147,10 +168,24 @@ class TestClient(unittest.TestCase):
         """对照 DSH 录屏补的交互：斜杠指令、结论/轨迹双视图、轻量提示。"""
         html = self.client.get("/app").get_data(as_text=True)
         for marker in ('id="cmd-panel"', "function renderCmd", "function execCmd",
-                       "/判定", "/查标准", "/留痕", "function switchRunView",
-                       'class="rtabs"', 'data-v="trace"', 'id="toast"'):
+                       "/判定", "/查标准", "/留痕", "function togglePane",
+                       'class="toggles"', 'data-p="trace"', 'id="toast"',
+                       'class="prose"', "d.brief"):
             self.assertIn(marker, html, marker)
-        self.assertNotIn("<details open>", html, "执行过程不该默认全展开糊在脸上")
+        self.assertNotIn('class="rtabs"', html, "不该再把内部分类摆在最显眼处")
+        self.assertNotIn("<details open>", html, "明细与轨迹都该默认收起")
+
+    def test_run_answer_starts_with_human_brief(self):
+        """判定回答必须先有一段人话，且明确说清为什么不给能收/不能收。"""
+        d = self.client.post("/api/client/chat", json={
+            "question": "DEMO-001 这批稻谷出糙率 76.5 能收吗", "mode": "judge"}).get_json()
+        b = d["brief"]
+        text = "".join(b["paras"])
+        self.assertTrue(b["paras"])
+        self.assertGreater(b["counts"]["passed"], 0, "合格项数由代码数出来，不是编的")
+        self.assertGreater(b["counts"]["review"], 0)
+        self.assertIn("能收", text, "要说清为什么不给放行结论")
+        self.assertIn("人工核对", text, "版本红线要出现在人话里")
 
     def test_llm_switch_off_by_request(self):
         """请求级关闭必须生效，且不能因为开关而联网。"""

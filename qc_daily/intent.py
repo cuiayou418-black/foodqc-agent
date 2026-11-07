@@ -77,12 +77,80 @@ def capability_answer() -> dict:
     }
 
 
-def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
-    """业务知识问答：从 corpus/*.md 找命中段落，带文件名出处；查不到明说未覆盖。
+_CONCEPT_WORDS = ("区别", "是什么", "定义", "什么意思", "不同", "差异", "含义")
 
-    terms 可由 LLM 意图层提供（比关键词更懂同义问法）；不传则本地抽词。
-    只做只读检索，不做生成结论，不改语料。
+# 概念性解释写死在代码里，是人工核对过的固定文本，不让模型生成、也不冒充语料摘录。
+# 语料 corpus/ 里这两个指标只有限值表格，没有定义性段落，检索器拼不出「区别」。
+_CONCEPT_NOTES = [
+    {
+        "keys": ("整精米率", "出糙率"),
+        "title": "整精米率和出糙率，差在「有没有碾白、米粒还完不完整」",
+        "paras": [
+            "出糙率：稻谷脱掉稻壳之后，糙米占原粮的重量比例。它回答的是「这批谷能出多少米」。",
+            "整精米率：继续碾磨成白米之后，仍然完整的米粒占原稻谷的比例。它回答的是「加工完还剩多少完整米」。",
+            "因为多了一道碾白、中间一定会产生碎米，整精米率不可能大于出糙率。两个数差得越大，碎米越多。"
+            "录入自查里「整精米率比出糙率还高」会被标成疑点，就是这个道理。",
+        ],
+        "boundary": [
+            "以上是写在代码里的通用概念说明，不是语料摘录，也不是限值依据",
+            "检验方法标准：GB/T 5495（出糙率）、GB/T 21719（整精米率），见 corpus/米粮标准清单_待核对.md",
+            "具体限值仍须人工核对标准原文后方可用于判定",
+        ],
+        "examples": ["出糙率 3 等限值是多少，依据哪一条",
+                     "DEMO-003 整精米率 80 比出糙率 72 还高，可疑吗"],
+    },
+]
+
+
+def _concept_note(question: str) -> dict | None:
+    """概念问答先走固定说明；没命中就交回检索，不让表格行凑答案。"""
+    q = str(question or "").strip()
+    if not any(w in q for w in _CONCEPT_WORDS):
+        return None
+    for note in _CONCEPT_NOTES:
+        if all(k in q for k in note["keys"]):
+            return {
+                "title": note["title"],
+                "lines": note["paras"],
+                "boundary": note["boundary"],
+                "examples": note["examples"],
+                "prose": True,
+            }
+    return None
+
+
+def _table_cells(line: str) -> str:
+    """单行 markdown 表格 → 能读的一句话；丢掉 --- 分隔单元格和加粗符号。"""
+    cells = []
+    for c in line.split("|"):
+        c = c.strip().replace("**", "").strip()
+        if not c or all(ch in "-: " for ch in c):
+            continue
+        cells.append(c)
+    return " · ".join(cells[:8]) if cells else ""
+
+
+def _present_para(para: str) -> str:
+    """非表格段落：代码块、文件名清单这类日志内容不作为答案。"""
+    p = para.strip()
+    if "```" in p:
+        p = p.split("```")[0].strip()
+        if len(p) < 20:
+            return ""
+    if p.count("|") > 3:
+        return _table_cells(p)
+    return p[:260]
+
+
+def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
+    """业务知识问答：概念问法给固定人话，其余从 corpus/*.md 找命中段落并带出处。
+
+    只读检索，不生成结论，不改语料。表格行不再原样贴给用户。
     """
+    note = _concept_note(question)
+    if note:
+        return note
+
     if terms is None:
         terms = [t for t in indicators() if t in question]
         stds = re.findall(r"GB\s*/?\s*T?\s*\d{3,5}", question, re.IGNORECASE)
@@ -100,33 +168,56 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
             for para in kb.split_entries(text):
                 if len(para) < 20 or not any(t in para for t in terms):
                     continue
-                score = 2 * sum(1 for t in terms if t in para)
-                if any(k in para for k in ("是指", "定义", "称为", "区别", "不同于",
-                                           "定等指标", "质量要求", "术语")):
-                    score += 3
-                if para.count("|") > 3:      # 纯表格行降权，优先给定义性文字
-                    score -= 2
-                scored.append((score, para[:260].strip(), path.name))
+                # 表格块按行拆，只留真正命中的那几行，别把整张表糊给用户
+                if para.count("|") > 3:
+                    candidates = []
+                    for ln in para.splitlines():
+                        if "|" not in ln or not any(t in ln for t in terms):
+                            continue
+                        clean = _table_cells(ln)
+                        if clean:
+                            candidates.append(clean)
+                    candidates = candidates[:2]
+                else:
+                    clean = _present_para(para)
+                    candidates = [clean] if clean else []
+                for cand in candidates:
+                    score = 2 * sum(1 for t in terms if t in cand)
+                    if any(k in cand for k in ("是指", "定义", "称为", "区别", "不同于",
+                                               "定等指标", "质量要求", "术语")):
+                        score += 3
+                    # 问限值时，带 ≥/≤ 的表行优先，别拿版本说明来凑答案
+                    if any(ch in cand for ch in ("≥", "≤", ">=", "<=")):
+                        score += 5
+                    scored.append((score, cand[:260], path.name))
         scored.sort(key=lambda x: -x[0])
         for _s, para, name in scored[:3]:
-            hits.append(f"[{name}] {para}")
+            clean = _present_para(para)
+            if not clean:
+                continue
+            hits.append(clean)
             if name not in sources:
                 sources.append(name)
 
     if hits:
+        extra = []
+        if any(w in question for w in ("限值", "多少", "合格线", "几等")) and not any(
+                any(ch in h for ch in ("≥", "≤", ">=", "<=")) for h in hits):
+            extra.append("这次没检索到带限值的表行，上面只是相关说明，不能拿去判合格")
         return {
-            "title": f"业务知识检索：{question}",
+            "title": "查到的相关条款",
             "lines": hits,
-            "boundary": [f"出处：{', '.join(sources)}（corpus/ 只读，未生成任何结论）",
-                         "以上为语料片段摘录，限值数字仍须人工核对原文后方可用于判定"],
-            "examples": ["DEMO-001 这批稻谷出糙率 76.5 能收吗"],
+            "boundary": [f"出处：{', '.join(sources)}（corpus/ 只读，未生成结论）"] + extra +
+                        ["以上为语料片段摘录，限值数字仍须人工核对原文后方可用于判定"],
+            "examples": ["整精米率和出糙率有什么区别",
+                         "DEMO-001 这批稻谷出糙率 76.5 能收吗"],
         }
     return {
-        "title": "这个问题目前的语料还没覆盖",
+        "title": "这个问法，语料里还没有能直接引用的段落",
         "lines": [
-            "我查了 corpus/ 下的国标与方法笔记，没有找到对应片段，"
-            "按「读不准就不写」的铁律不编答案。",
-            "可以换个更具体的问法：指出指标名（如出糙率）、标准号（如 GB 1350）"
+            "我翻了 corpus/ 下的国标和方法笔记，没找到对应的定义性文字，"
+            "就不拿限值表格凑一段给你了。",
+            "可以换个更具体的问法：指出指标名（出糙率）、标准号（GB 1350）"
             "或批次号（DEMO-001）。",
         ],
         "boundary": ["知识库支持在左栏上传文件；新资料先进待核对区，人工确认后才可用",
