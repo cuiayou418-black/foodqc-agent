@@ -12,6 +12,9 @@
     python -m qc_daily web [--port 8000] [--scheduler]  # 启动 Web 服务（局域网演示）
     python -m qc_daily import --file 我的数据.xlsx --dry-run  # 导入自己的 Excel/CSV 数据
     python -m qc_daily ask "这批稻谷为什么判三等"      # 一句话问答（默认纯代码，QC_USE_LLM=1 才启用解释层）
+    python -m qc_daily task --task grain_daily_report --input 我的数据.csv
+                            [--date YYYY-MM-DD] [--formats html excel] [--out runs/]
+                                                # 业务任务：不启 Flask，独立产出完整报告
 
 说明：run / daemon / backfill / web 出报时会自动执行「检验记录录入错误自查」
       （qc_daily/validate.py：只读，只标「待人工确认」，不改数值、不改写 verdict、
@@ -204,6 +207,15 @@ def cmd_ask(args) -> int:
     return 0 if result.get("ok") else 1
 
 
+def cmd_task(args) -> int:
+    """业务任务独立入口：并列新增，不改现有子命令，也不依赖 Flask。"""
+    from .task_cli import execute
+
+    return execute(task_id=args.task_id, inputs=args.input,
+                   report_date=args.date or "", formats=args.formats,
+                   output_root=args.out, config_path=getattr(args, "config", None))
+
+
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="qc_daily", description="品控日报自动化智能体")
     parser.add_argument("--config", help="配置文件路径（默认 qc_daily_config.json）")
@@ -259,6 +271,14 @@ def main(argv=None) -> int:
     p = sub.add_parser("ask", parents=[common], help="一句话问答（系统自己选工具，判定权在代码）")
     p.add_argument("question", help="中文问题，如「这批稻谷为什么判三等」")
     p.set_defaults(func=cmd_ask)
+
+    p = sub.add_parser("task", parents=[common], help="业务任务（不依赖 Web，独立产出报告）")
+    p.add_argument("--task", dest="task_id", required=True, help="任务 ID，见 tasks/registry.py")
+    p.add_argument("--input", nargs="+", required=True, help="表格文件或目录（可多个）")
+    p.add_argument("--date", help="报告日期 YYYY-MM-DD（默认昨天）")
+    p.add_argument("--formats", nargs="+", help="导出格式，空格分隔，如 html excel")
+    p.add_argument("--out", default="runs", help="run 根目录（默认项目根 runs/）")
+    p.set_defaults(func=cmd_task)
 
     args = parser.parse_args(argv)
     return args.func(args)
