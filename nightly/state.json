@@ -1,1 +1,5 @@
-{"next_round": 1}
+{
+  "next_round": 2,
+  "last_round": 1,
+  "note": "第1轮已人工判定并写入 FINDINGS；01:00 从第2轮起跑"
+}
