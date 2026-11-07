@@ -143,6 +143,15 @@ class TestClient(unittest.TestCase):
             "question": "DEMO-001 这批稻谷出糙率 76.5 能收吗", "mode": "???"}).get_json()
         self.assertEqual(d["mode_used"], "auto")
 
+    def test_video_driven_controls(self):
+        """对照 DSH 录屏补的交互：斜杠指令、结论/轨迹双视图、轻量提示。"""
+        html = self.client.get("/app").get_data(as_text=True)
+        for marker in ('id="cmd-panel"', "function renderCmd", "function execCmd",
+                       "/判定", "/查标准", "/留痕", "function switchRunView",
+                       'class="rtabs"', 'data-v="trace"', 'id="toast"'):
+            self.assertIn(marker, html, marker)
+        self.assertNotIn("<details open>", html, "执行过程不该默认全展开糊在脸上")
+
     def test_llm_switch_off_by_request(self):
         """请求级关闭必须生效，且不能因为开关而联网。"""
         d = self.client.post("/api/client/chat", json={

@@ -132,10 +132,29 @@ details[open] summary:before{content:"▾ "}
 .tri b{display:block;font-size:11px;margin-bottom:5px;opacity:.85}
 .tri ul{margin:0;padding-left:15px}
 .tri li{margin:2px 0;line-height:1.45}
-.disclaim{margin-top:11px;background:var(--bad-bg);color:var(--bad);border-left:3px solid var(--bad);border-radius:0 6px 6px 0;padding:8px 11px;font-size:12px}
+.disclaim{margin-top:10px;border-left:2px solid var(--line);padding:2px 0 2px 10px;font-size:11px;color:var(--ink3);line-height:1.65}
+.disclaim ul{margin:0;padding-left:15px}
+.rtabs{display:flex;gap:2px;border-bottom:1px solid var(--line);margin:2px 0 12px}
+.rtabs button{border:0;background:transparent;color:var(--ink3);font-size:12px;font-family:inherit;padding:5px 12px 7px;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.rtabs button:hover{color:var(--brand)}
+.rtabs button.on{color:var(--brand);border-bottom-color:var(--brand);font-weight:600}
+.rview[hidden]{display:none}
+.evlist{border:1px solid var(--line);border-radius:8px;background:var(--code);margin-bottom:8px}
+.evlist .ev:first-child{border-top:0}
 .trace{margin-top:8px;font-size:11px;color:var(--ink3);font-family:Consolas,monospace}
 .composer{flex:0 0 auto;padding:8px 26px 16px}
-.cbox{max-width:860px;margin:0 auto;border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:10px 14px 9px}
+.cbox{position:relative;max-width:860px;margin:0 auto;border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:10px 14px 9px}
+.cmdpanel{position:absolute;bottom:calc(100% + 8px);left:0;width:min(520px,100%);max-height:300px;overflow-y:auto;background:var(--panel);border:1px solid var(--line);border-radius:11px;box-shadow:0 14px 34px rgba(0,0,0,.16);padding:6px;z-index:60;display:none}
+.cmdpanel.show{display:block}
+.cmdpanel .ci{display:flex;align-items:baseline;gap:12px;width:100%;text-align:left;border:0;background:transparent;color:var(--ink);font-family:inherit;padding:7px 10px;border-radius:7px;cursor:pointer}
+.cmdpanel .ci:hover,.cmdpanel .ci.on{background:var(--brand-soft)}
+.cmdpanel .ci .k{font-family:Consolas,"Courier New",monospace;font-size:12px;color:var(--brand);min-width:62px}
+.cmdpanel .ci .d{font-size:11.5px;color:var(--ink3);flex:1}
+.cmdpanel .ct{font-size:10.5px;color:var(--ink3);padding:5px 10px 7px;border-bottom:1px solid var(--line);margin-bottom:4px}
+.cmdpanel .cn{font-size:12px;color:var(--ink3);padding:12px;text-align:center}
+.cmdhint{font-size:10.5px;color:var(--ink3)}
+.toast{position:fixed;left:50%;bottom:112px;transform:translateX(-50%);background:#2b3138;color:#fff;font-size:12px;padding:8px 15px;border-radius:20px;opacity:0;pointer-events:none;transition:opacity .22s;z-index:100;max-width:80vw;text-align:center}
+.toast.show{opacity:.93}
 .cbar{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--ink2);padding-bottom:6px}
 .cbar .sp{flex:1}
 .dd{position:relative;display:inline-block}
@@ -225,6 +244,7 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
     </div>
     <div class="composer">
       <div class="cbox">
+        <div class="cmdpanel" id="cmd-panel"></div>
         <div class="cbar">
           <span class="tag" title="当前只有一个工作区，多工作区未开放">默认工作区</span>
           <div class="dd" id="mode-dd">
@@ -232,6 +252,7 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
             <div class="ddmenu" id="mode-menu"></div>
           </div>
           <div class="sp"></div>
+          <span class="cmdhint">输入 / 唤起指令</span>
           <button class="hist-btn" id="hist-up" title="上一条提问" disabled>↑</button>
           <button class="hist-btn" id="hist-down" title="下一条提问" disabled>↓</button>
         </div>
@@ -249,6 +270,7 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
     </div>
   </main>
 </div>
+<div class="toast" id="toast"></div>
 <script>
 var CHIPS=[
  "你能干什么",
@@ -370,25 +392,40 @@ function buildChat(a,meta){
  return t.content;
 }
 function buildRun(d){
+ var n=(d.trace_events||[]).length;
  var ev=(d.trace_events||[]).map(function(x){
    return '<div class="ev"><span class="nm">'+esc(x.tool)+' ('+esc(JSON.stringify(x.args||{}))+')</span>'+
           '<span class="rs">'+esc(x.result_brief||'')+'</span></div>';
- }).join('');
+ }).join('')||'<div class="cn">本次没有工具调用留痕</div>';
  var s=d.sections||{};
+ var conclusion='<div class="h3">三段式输出</div><div class="tri">'+
+   tri('已确认','a',s['已确认'])+tri('待人工复核','b',s['待人工复核'])+tri('未覆盖','c',s['未覆盖'])+
+  '</div>'+
+  '<div class="disclaim">结论仅供复核，不得作为放行依据；最终由人签字。模型不算数，数字由代码算。</div>'+
+  '<div class="trace">留痕 '+esc(d.trace_path)+'　|　'+esc(d.report_path||'（本次未生成报告）')+'</div>';
+ var trace='<div class="evlist">'+ev+'</div>'+
+  '<div class="disclaim">以上每一步都是真实调用；模型只决定调哪个工具，不产数字、不定结论。</div>';
  var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+
   '<div class="meta"><span>模式 '+esc(MODE_LABEL[d.mode_used]||d.mode_used||'自动')+'</span>'
    +'<span>路由 '+(d.router==='llm'?'模型识别':(d.router==='mode'?'模式强制':'规则'))+'</span>'
    +'<span>批次 '+esc(d.batch_id)+'</span><span>终止 '+esc(d.stop_reason)+'</span>'+
   '<span>步骤 '+esc(d.steps)+'</span><span>LLM '+(d.llm_used?'启用':'关闭')+'</span>'+
   '<span>'+esc(d.data_scope||'DEMO-only')+'</span></div>'+
-  '<details open><summary>执行过程（'+esc((d.trace_events||[]).length)+' 条真实工具调用）</summary>'+ev+'</details>'+
-  '<div class="h3">三段式输出</div><div class="tri">'+
-   tri('已确认','a',s['已确认'])+tri('待人工复核','b',s['待人工复核'])+tri('未覆盖','c',s['未覆盖'])+
-  '</div>'+
-  '<div class="disclaim">结论仅供复核，不得作为放行依据；最终由人签字。模型不算数，数字由代码算。</div>'+
-  '<div class="trace">留痕 '+esc(d.trace_path)+'　|　'+esc(d.report_path||'（本次未生成报告）')+'</div>'+
+  '<div class="rtabs"><button data-v="conclusion" class="on">结论</button>'+
+   '<button data-v="trace">执行过程（'+esc(n)+'）</button></div>'+
+  '<div class="rview" data-v="conclusion">'+conclusion+'</div>'+
+  '<div class="rview" data-v="trace" hidden>'+trace+'</div>'+
  '</div></div>';
- var t=document.createElement('template');t.innerHTML=h;return t.content;
+ var t=document.createElement('template');t.innerHTML=h;
+ t.content.querySelectorAll('.rtabs button').forEach(function(b){
+  b.onclick=function(){switchRunView(b.parentNode,b.dataset.v);};
+ });
+ return t.content;
+}
+function switchRunView(tabs,v){
+ tabs.querySelectorAll('button').forEach(function(b){b.classList.toggle('on',b.dataset.v===v);});
+ var card=tabs.parentNode;
+ card.querySelectorAll('.rview').forEach(function(x){x.hidden=(x.dataset.v!==v);});
 }
 function addUser(txt){push({role:'user',text:txt});renderMsgs();}
 function addErr(txt){push({role:'err',text:txt});renderMsgs();}
@@ -409,7 +446,7 @@ async function send(q){
   if(d.llm_state)applyLlmState(d.llm_state);
   addAgent(d);
  }catch(e){addErr('运行失败：'+e.message);}
- finally{b.disabled=false;b.textContent='↑';el('q').value='';el('q').focus();}
+ finally{b.disabled=false;b.textContent='↑';el('q').value='';closeCmd();el('q').focus();}
 }
 async function loadKB(){
  try{
@@ -443,6 +480,64 @@ CARDS.forEach(function(c){
  b.innerHTML='<span class="ic">'+c.ic+'</span><b>'+esc(c.t)+'</b><small>'+esc(c.d)+'</small>';
  b.onclick=function(){send(c.q);};el('wcards').appendChild(b);
 });
+var TOAST_T=null;
+function toast(msg){
+ var t=el('toast');if(!t)return;
+ t.textContent=msg;t.classList.add('show');
+ clearTimeout(TOAST_T);
+ TOAST_T=setTimeout(function(){t.classList.remove('show');},2200);
+}
+
+/* —— 斜杠指令：每条都真的执行一个动作，不是一张菜单贴图 —— */
+var CMDS=[
+ {k:'/判定',d:'切到判定模式，逐项判 DEMO 假批次',run:function(){setMode('judge');toast('已切到判定模式');}},
+ {k:'/查标准',d:'只检索 corpus 条款，不进判定链',run:function(){setMode('lookup');toast('已切到只查标准');}},
+ {k:'/问答',d:'只解释不判定，不写留痕',run:function(){setMode('chat');toast('已切到问答模式');}},
+ {k:'/自动',d:'按问题自己判断该查还是该判',run:function(){setMode('auto');toast('已切回自动');}},
+ {k:'/能力',d:'直接问「你能干什么」',run:function(){send('你能干什么');}},
+ {k:'/留痕',d:'展开最近一次执行的真实工具调用',run:function(){showLastTrace();}},
+ {k:'/新建',d:'开一个新对话',run:function(){newSession();toast('新对话已开');}}
+];
+var CMD_OPEN=false,CMD_SEL=0,CMD_LIST=[];
+function closeCmd(){CMD_OPEN=false;el('cmd-panel').classList.remove('show');}
+function cmdFilter(q){
+ var body=q.trim().slice(1).toLowerCase();
+ return CMDS.filter(function(c){return !body||c.k.slice(1).indexOf(body)>=0||c.d.indexOf(body)>=0;});
+}
+function renderCmd(){
+ var p=el('cmd-panel'),q=el('q').value;
+ if(!q||q.charAt(0)!=='/'){closeCmd();p.innerHTML='';return;}
+ CMD_LIST=cmdFilter(q);
+ CMD_OPEN=CMD_LIST.length>0;
+ p.classList.add('show');
+ if(!CMD_LIST.length){
+  p.innerHTML='<div class="ct">指令</div><div class="cn">没有匹配的指令，按 Esc 关闭</div>';return;
+ }
+ if(CMD_SEL>=CMD_LIST.length)CMD_SEL=0;
+ var html='<div class="ct">指令 · ↑↓ 选择 · Enter 执行 · Esc 关闭</div>';
+ CMD_LIST.forEach(function(c,i){
+  html+='<button class="ci'+(i===CMD_SEL?' on':'')+'" data-i="'+i+'">'+
+        '<span class="k">'+esc(c.k)+'</span><span class="d">'+esc(c.d)+'</span></button>';
+ });
+ p.innerHTML=html;
+ p.querySelectorAll('.ci').forEach(function(b){
+  b.onmousedown=function(e){e.preventDefault();execCmd(Number(b.dataset.i));};
+ });
+}
+function execCmd(i){
+ var c=CMD_LIST[i];if(!c)return;
+ el('q').value='';closeCmd();el('cmd-panel').innerHTML='';
+ c.run();
+}
+function showLastTrace(){
+ var tabs=el('msgs').querySelectorAll('.rtabs');
+ if(!tabs.length){toast('这个对话还没跑过判定，先发一句 DEMO- 批次');return;}
+ var last=tabs[tabs.length-1];
+ switchRunView(last,'trace');
+ last.scrollIntoView({behavior:'smooth',block:'center'});
+ toast('已切到最近一次的执行过程');
+}
+
 function toggleKB(){var b=el('kb-box');b.style.display=(b.style.display==='none'?'block':'none');}
 
 /* —— 判定模式下拉：真的会改变后端走哪条路 —— */
@@ -549,8 +644,15 @@ el('kb-toggle').onclick=toggleKB;
 el('kb-toggle2').onclick=toggleKB;
 el('send').onclick=function(){send(el('q').value);};
 el('q').addEventListener('keydown',function(e){
+ if(CMD_OPEN){
+  if(e.key==='ArrowDown'){e.preventDefault();CMD_SEL=Math.min(CMD_SEL+1,CMD_LIST.length-1);renderCmd();return;}
+  if(e.key==='ArrowUp'){e.preventDefault();CMD_SEL=Math.max(CMD_SEL-1,0);renderCmd();return;}
+  if(e.key==='Enter'){e.preventDefault();execCmd(CMD_SEL);return;}
+  if(e.key==='Escape'){e.preventDefault();closeCmd();el('cmd-panel').innerHTML='';return;}
+ }
  if(e.key==='Enter'&&!e.ctrlKey&&!e.metaKey){e.preventDefault();send(this.value);}
 });
+el('q').addEventListener('input',function(){CMD_SEL=0;renderCmd();});
 el('k-up').onclick=upload;
 el('new-conv').onclick=newSession;
 el('theme').onclick=function(){
@@ -565,6 +667,8 @@ el('hist-up').onclick=histPrev;
 el('hist-down').onclick=histNext;
 document.addEventListener('click',function(e){
  var dd=el('mode-dd');if(dd&&!dd.contains(e.target))dd.classList.remove('open');
+ var cp=el('cmd-panel');
+ if(cp&&e.target!==el('q')&&!cp.contains(e.target)){closeCmd();}
 });
 document.querySelectorAll('.group[data-fold]').forEach(function(g){
  g.onclick=function(){toggleFold(g.dataset.fold);};
