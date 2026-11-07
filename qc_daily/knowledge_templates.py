@@ -50,7 +50,7 @@ _BODY = """
 </div>
 
 <div style="background:#fff;border:1px solid #e3e6ea;border-radius:10px;padding:18px;margin-bottom:16px">
-  <div style="font-size:16px;font-weight:600;margin-bottom:4px">待核对区（上传后立刻显示在这里）</div>
+  <div id="kb-inbox-section" style="font-size:16px;font-weight:600;margin-bottom:4px">待核对区（上传后立刻显示在这里）</div>
   <div style="font-size:12px;color:#7b828b;margin-bottom:10px">
     新上传的文件状态为「待核对」，<strong>不参与检索与判定</strong>。人工核对后点「确认纳入」；
     该动作只更新状态，限值仍需另行逐格核对才能写入判定链。

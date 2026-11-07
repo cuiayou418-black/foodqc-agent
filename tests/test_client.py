@@ -134,6 +134,50 @@ class TestClient(unittest.TestCase):
         self.assertNotIn("|---", text)
         self.assertNotIn("业务知识检索", d["answer"]["title"])
 
+    # ---- 人工核对指路：出现状态就要给出准确、可直达的位置 ----
+
+    def test_run_answer_points_to_real_places(self):
+        d = self.client.post("/api/client/chat", json={
+            "question": "DEMO-001 这批稻谷出糙率 76.5 能收吗", "mode": "judge"}).get_json()
+        cps = d["checkpoints"]
+        self.assertEqual(len(cps), 3, "原始数据 / 知识库 / 系统外签字")
+        kinds = [c["kind"] for c in cps]
+        self.assertEqual(kinds, ["record", "knowledge", "human"])
+        self.assertIn("/api/client/record/DEMO-001", cps[0]["action"])
+        self.assertIn("kb-inbox-section", cps[1]["action"])
+        self.assertEqual(cps[2]["action"], "", "系统外的步骤不能伪装成可点入口")
+
+    def test_lookup_points_to_knowledge_inbox(self):
+        d = self.client.post("/api/client/chat", json={
+            "question": "整精米率和出糙率有什么区别", "mode": "lookup"}).get_json()
+        self.assertEqual(len(d["checkpoints"]), 1)
+        self.assertEqual(d["checkpoints"][0]["kind"], "knowledge")
+
+    def test_capability_answer_has_no_checkpoint(self):
+        """能力问答不是核对流程，不该弹指引卡吵人。"""
+        d = self.client.post("/api/client/chat", json={
+            "question": "你能干什么", "mode": "auto"}).get_json()
+        self.assertEqual(d["checkpoints"], [])
+
+    def test_record_endpoint_is_readonly_and_scoped(self):
+        r = self.client.get("/api/client/record/DEMO-001")
+        self.assertEqual(r.status_code, 200, r.get_data(as_text=True)[:200])
+        d = r.get_json()
+        self.assertTrue(d["ok"] and d["readonly"])
+        self.assertEqual(d["batch_id"], "DEMO-001")
+        self.assertGreater(len(d["rows"]), 0)
+        self.assertIn("harness.py", d["source"], "要说清判定链读的是哪一份")
+        self.assertIn("1.45", d["note"], "要点破三份数据不一致")
+        self.assertEqual(self.client.get("/api/client/record/REAL-001").status_code, 400)
+
+    def test_checkpoint_ui_and_inbox_anchor(self):
+        html = self.client.get("/app").get_data(as_text=True)
+        for marker in ("function cpBlock", "function openRecord", 'id="rec-modal"',
+                       "class=\"cpbox\"", "data-rec="):
+            self.assertIn(marker, html, marker)
+        kb_html = self.client.get("/knowledge").get_data(as_text=True)
+        self.assertIn('id="kb-inbox-section"', kb_html, "指路链接的锚点必须真实存在")
+
     def test_mode_chat_does_not_enter_chain(self):
         d = self.client.post("/api/client/chat", json={
             "question": "DEMO-001 这批稻谷出糙率 76.5 能收吗", "mode": "chat"}).get_json()

@@ -152,6 +152,29 @@ details[open] summary:before{content:"▾ "}
 .pane{margin-top:12px}
 .pane[hidden]{display:none}
 .footline{margin-top:13px;padding-top:9px;border-top:1px solid var(--line);font-size:10.5px;color:var(--ink3);line-height:1.7}
+.cpbox{margin:14px 0 2px;border:1px solid var(--warn);border-left:4px solid var(--warn);background:var(--warn-bg);border-radius:0 10px 10px 0;padding:12px 14px}
+.cp-t{font-size:12.5px;font-weight:600;color:var(--warn);margin-bottom:8px}
+.cp{border-top:1px dashed var(--line);padding:9px 0}
+.cp:first-of-type{border-top:0;padding-top:2px}
+.cp-h{font-size:12.5px;font-weight:600;color:var(--ink);margin-bottom:3px}
+.cp-d{font-size:11.5px;color:var(--ink2);line-height:1.6;margin-bottom:7px}
+.cp-go{display:inline-block;border:1px solid var(--warn);background:var(--panel);color:var(--warn);font-family:inherit;font-size:11.5px;border-radius:6px;padding:4px 11px;cursor:pointer;text-decoration:none}
+.cp-go:hover{background:var(--warn);color:#fff}
+.cp-off{font-size:11px;color:var(--ink3)}
+.modal{position:fixed;inset:0;z-index:200;display:flex;align-items:center;justify-content:center}
+.modal[hidden]{display:none}
+.modal-bg{position:absolute;inset:0;background:rgba(0,0,0,.42)}
+.modal-box{position:relative;width:min(720px,92vw);max-height:82vh;overflow-y:auto;background:var(--panel);border:1px solid var(--line);border-radius:14px;box-shadow:0 24px 60px rgba(0,0,0,.28);padding:18px 20px}
+.modal-h{display:flex;align-items:center;gap:10px;margin-bottom:12px}
+.modal-h b{font-size:14px;flex:1;color:var(--ink)}
+.modal-x{border:0;background:transparent;color:var(--ink3);font-size:20px;cursor:pointer;line-height:1}
+.rec-src{font-size:11.5px;color:var(--ink2);background:var(--code);border:1px solid var(--line);border-radius:8px;padding:9px 11px;margin-bottom:12px;line-height:1.6}
+.rec-note{font-size:11.5px;color:var(--warn);background:var(--panel);border-left:3px solid var(--warn);border-radius:0 6px 6px 0;padding:9px 11px;margin-top:12px;line-height:1.65}
+.rec-tb{width:100%;border-collapse:collapse;font-size:12px}
+.rec-tb th,.rec-tb td{border:1px solid var(--line);padding:6px 9px;text-align:left}
+.rec-tb th{background:var(--code);color:var(--ink2);font-weight:600}
+.rec-tb td.num{text-align:right;font-variant-numeric:tabular-nums}
+.rec-tb tr.bad td{background:var(--bad-bg);color:var(--bad);font-weight:600}
 .trace{margin-top:8px;font-size:11px;color:var(--ink3);font-family:Consolas,monospace}
 .composer{flex:0 0 auto;padding:8px 26px 16px}
 .cbox{position:relative;max-width:860px;margin:0 auto;border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:10px 14px 9px}
@@ -282,6 +305,13 @@ textarea{width:100%;resize:none;height:48px;border:0;outline:none;padding:6px 2p
   </main>
 </div>
 <div class="toast" id="toast"></div>
+<div class="modal" id="rec-modal" hidden>
+  <div class="modal-bg" id="rec-bg"></div>
+  <div class="modal-box">
+    <div class="modal-h"><b id="rec-title">原始记录</b><button class="modal-x" id="rec-x">×</button></div>
+    <div id="rec-body"></div>
+  </div>
+</div>
 <script>
 var CHIPS=[
  "你能干什么",
@@ -385,6 +415,48 @@ function tri(title,cls,arr){
  var lis=(arr||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('')||'<li>（无）</li>';
  return '<div class="'+cls+'"><b>'+title+'</b><ul>'+lis+'</ul></div>';
 }
+/* —— 人工核对指路：独立的琥珀卡片，不跟「逐项明细 / 执行过程 / 校验」混在一起 —— */
+function cpBlock(cps){
+ if(!cps||!cps.length)return '';
+ var items=cps.map(function(c){
+  var link=c.action
+   ? (c.kind==='record'
+      ? '<button class="cp-go" data-rec="'+esc(c.action)+'">'+esc(c.label)+' ↗</button>'
+      : '<a class="cp-go" href="'+esc(c.action)+'" target="_blank" rel="noopener">'+esc(c.label)+' ↗</a>')
+   : '<span class="cp-off">系统外 · 不用点这里</span>';
+  return '<div class="cp"><div class="cp-h">'+esc(c.title)+'</div>'+
+         '<div class="cp-d">'+esc(c.desc)+'</div>'+link+'</div>';
+ }).join('');
+ return '<div class="cpbox"><div class="cp-t">⚑ 这几处需要人工核对 · 按下面指的位置去</div>'+
+        items+'</div>';
+}
+function bindCP(root){
+ root.querySelectorAll('[data-rec]').forEach(function(b){
+  b.onclick=function(){openRecord(b.dataset.rec);};
+ });
+}
+async function openRecord(url){
+ var m=el('rec-modal'),body=el('rec-body');
+ m.hidden=false;body.textContent='读取中…';
+ try{
+  var r=await fetch(url),d=await r.json();
+  if(!d.ok)throw new Error(d.error||'读取失败');
+  el('rec-title').textContent=d.batch_id+' · 判定链实际使用的原始记录（只读）';
+  var rows=(d.rows||[]).map(function(x){
+   var bad=(String(x.unit||'').indexOf('%')>=0&&Number(x.value)>100);
+   return '<tr'+(bad?' class="bad"':'')+'><td>'+esc(x.item)+'</td>'+
+    '<td class="num">'+esc(x.value)+'</td><td>'+esc(x.unit||'')+'</td>'+
+    '<td>'+esc(x.direction||'')+' '+esc(x.limit_value)+'</td>'+
+    '<td>'+esc(x.standard||'')+'</td></tr>';
+  }).join('');
+  body.innerHTML='<div class="rec-src"><b>来源：</b>'+esc(d.source)+'</div>'+
+   '<table class="rec-tb"><thead><tr><th>检测项目</th><th>实测值</th><th>单位</th>'+
+   '<th>限值</th><th>标准号</th></tr></thead><tbody>'+rows+'</tbody></table>'+
+   '<div class="rec-note">'+esc(d.note)+'</div>';
+ }catch(e){body.textContent='读取失败：'+e.message;}
+}
+function closeRecord(){el('rec-modal').hidden=true;}
+
 function buildChat(a,meta){
  var foot=(meta&&meta.mode_used)?('<div class="footline">模式 '+esc(MODE_LABEL[meta.mode_used]||meta.mode_used)+' · '+
   (meta.router==='llm'?'模型识别':(meta.router==='mode'?'模式强制':'规则路由'))+
@@ -398,15 +470,17 @@ function buildChat(a,meta){
   : '<ul style="margin:0;padding-left:18px;font-size:12.5px;line-height:1.7">'+lines+'</ul>';
  var bd=(a.boundary||[]).map(function(x){return '<li>'+esc(x)+'</li>';}).join('');
  var ex=(a.examples||[]).map(function(x){return '<button class="chip" data-q="'+esc(x)+'">'+esc(x)+'</button>';}).join('');
+ var cps=cpBlock(meta&&meta.cps);
  var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+
   '<div class="h3" style="font-size:14px;margin:0 0 10px">'+esc(a.title)+'</div>'+
-  body+
+  body+cps+
   (bd?'<div class="disclaim"><ul style="margin:0;padding-left:16px">'+bd+'</ul></div>':'')+
   (ex?'<div class="h3">试试这样问</div><div class="chips" style="margin:0">'+ex+'</div>':'')+
   foot+
  '</div></div>';
  var t=document.createElement('template');t.innerHTML=h;
  t.content.querySelectorAll('[data-q]').forEach(function(b){b.onclick=function(){send(b.dataset.q);};});
+ bindCP(t.content);
  return t.content;
 }
 function buildRun(d){
@@ -430,7 +504,7 @@ function buildRun(d){
   ' · 模型 '+(d.llm_used?'已调用':'未调用')+' · '+esc(d.data_scope||'DEMO-only')+
   (d.trace_path?'<br>留痕 '+esc(d.trace_path)+(d.report_path?'　|　'+esc(d.report_path):''):'');
  var h='<div class="msg"><div class="who"><span class="sq"></span>FoodQC-Agent</div><div class="card">'+
-  '<div class="prose">'+paras+'</div>'+
+  '<div class="prose">'+paras+'</div>'+cpBlock(d.checkpoints)+
   '<div class="toggles">'+
    '<button class="tg" data-p="detail">逐项明细（'+esc(total)+'）▾</button>'+
    '<button class="tg" data-p="trace">执行过程（'+esc(n)+'）▾</button>'+
@@ -443,6 +517,7 @@ function buildRun(d){
  t.content.querySelectorAll('.tg').forEach(function(b){
   b.onclick=function(){togglePane(b);};
  });
+ bindCP(t.content);
  return t.content;
 }
 function togglePane(b){
@@ -466,7 +541,7 @@ function addUser(txt){push({role:'user',text:txt});renderMsgs();}
 function addErr(txt){push({role:'err',text:txt});renderMsgs();}
 function addChat(a,meta){push({role:'agent',mode:'chat',data:{answer:a,meta:meta||{}}});renderMsgs();}
 function addAgent(d){
- if(d.mode==='chat'){addChat(d.answer||{},{mode_used:d.mode_used,router:d.router,llm_used:d.llm_used});return;}
+ if(d.mode==='chat'){addChat(d.answer||{},{mode_used:d.mode_used,router:d.router,llm_used:d.llm_used,cps:d.checkpoints});return;}
  push({role:'agent',mode:'run',data:d});renderMsgs();
 }
 async function send(q){
@@ -701,6 +776,9 @@ el('mode-btn').onclick=function(e){
 el('llm-btn').onclick=toggleLlm;
 el('hist-up').onclick=histPrev;
 el('hist-down').onclick=histNext;
+el('rec-x').onclick=closeRecord;
+el('rec-bg').onclick=closeRecord;
+document.addEventListener('keydown',function(e){if(e.key==='Escape')closeRecord();});
 document.addEventListener('click',function(e){
  var dd=el('mode-dd');if(dd&&!dd.contains(e.target))dd.classList.remove('open');
  var cp=el('cmd-panel');
@@ -762,6 +840,64 @@ def _brief(result: dict) -> dict:
         "counts": {"confirmed": len(ok), "review": len(rv),
                    "uncovered": len(ms), "passed": passed},
     }
+
+
+# 出现这些字样，就说明这次回答把球踢给了人；必须同时给出「去哪、看什么」。
+_NEED_CHECK = ("需要人工核对", "待人工复核", "仍须人工核对", "尚未人工核对",
+               "翻一下原始记录", "复核完签字", "人工复核签字", "翻原始记录")
+
+
+def _answer_text(a: dict) -> str:
+    """把结构化回答摊平，只用来判断有没有「需要人工核对」的标记。"""
+    return "\n".join([str(a.get("title") or "")] +
+                     [str(x) for x in (a.get("lines") or [])] +
+                     [str(x) for x in (a.get("boundary") or [])])
+
+
+def _checkpoints(text: str, batch_id: str, mode: str, in_chain: bool = False) -> list[dict]:
+    """把「需要人工核对」的空话变成可直达的入口。
+
+    in_chain 表示这次真的跑了判定链（此时 mode 是 judge/auto，不等于返回体的 "run"）。
+    只指向真实存在的位置；系统外的步骤明说系统外，不伪装成按钮。
+    """
+    t = text or ""
+    has_mark = any(k in t for k in _NEED_CHECK)
+    if in_chain and has_mark:
+        out: list[dict] = []
+        if batch_id:
+            out.append({
+                "kind": "record",
+                "title": f"先看 {batch_id} 这批的原始记录",
+                "desc": "判定链实际读的是 qc_daily/harness.py 里的 _DEMO_PLAN。"
+                        "点开能直接看到这批的实测值，只读，不会改动任何数据。",
+                "action": f"/api/client/record/{batch_id}",
+                "label": f"打开 {batch_id} 原始数据",
+            })
+        out.append({
+            "kind": "knowledge",
+            "title": "去知识库核对限值",
+            "desc": "当前执行的 GB 1350—2009 限值还没人工核对。"
+                    "在 /knowledge 页面下半部分的「待核对区」上传或确认资料。",
+            "action": "/knowledge#kb-inbox-section",
+            "label": "打开知识库 · 待核对区",
+        })
+        out.append({
+            "kind": "human",
+            "title": "放行签字这一步在系统外",
+            "desc": "本系统不放行、不签字。按汇报线找班长或主任，由人复核后签字。",
+            "action": "",
+            "label": "",
+        })
+        return out
+    if mode == "lookup" and has_mark:
+        return [{
+            "kind": "knowledge",
+            "title": "限值要人工核对后才能用",
+            "desc": "在 /knowledge 页面下半部分的「待核对区」核对标准原文，确认后才纳入检索与判定。",
+            "action": "/knowledge#kb-inbox-section",
+            "label": "打开知识库 · 待核对区",
+        }]
+    return []
 
 
 def _relative(path: str) -> str:
@@ -895,6 +1031,7 @@ def client_chat():
                 "router": router,
                 "mode_used": mode,
                 "llm_state": state,
+                "checkpoints": _checkpoints(_answer_text(payload["answer"]), "", mode),
                 "batch_id": "", "stop_reason": "chat_route", "steps": 0,
                 "tools_called": [], "llm_used": used_llm,
                 "data_scope": "入口理解层（未进入判定链）",
@@ -918,15 +1055,19 @@ def client_chat():
                             "error": "只接受 DEMO- 假批次；真实批次号与实测值不进本系统"}), 400
 
         trace_path = result.get("trace_path", "")
+        brief = _brief(result)
+        run_text = "\n".join(brief["paras"] +
+                             [str(x) for x in (result.get("sections", {}).get("待人工复核") or [])])
         return jsonify({
             "ok": True,
             "mode": "run",
             "mode_used": mode,
             "router": router,
             "llm_state": state,
+            "checkpoints": _checkpoints(run_text, result.get("batch_id", ""), mode, in_chain=True),
             "question": question,
             "batch_id": result.get("batch_id", ""),
-            "brief": _brief(result),
+            "brief": brief,
             "stop_reason": result.get("stop_reason", ""),
             "steps": result.get("steps", 0),
             "tools_called": result.get("tools_called", []),
@@ -955,3 +1096,28 @@ def client_state():
 @client_bp.get("/api/client/knowledge")
 def client_knowledge():
     return jsonify(kb.overview())
+
+
+@client_bp.get("/api/client/record/<batch_id>")
+def client_record(batch_id: str):
+    """只读查看判定链实际使用的 DEMO 原始记录。
+
+    指路用：让「翻原始记录核对」有个真能点开的地方，不改变任何源数据。
+    """
+    bid = str(batch_id or "").strip().upper()
+    if not bid.startswith("DEMO-"):
+        return jsonify({"ok": False, "error": "这里只提供 DEMO 假批次的只读查看"}), 400
+    try:
+        from . import harness
+        rows = harness._demo_records(bid)
+    except Exception as e:
+        return jsonify({"ok": False, "error": f"读取失败（{type(e).__name__}）"}), 500
+    if not rows:
+        return jsonify({"ok": False, "error": f"没有 {bid} 的演示记录"}), 404
+    return jsonify({
+        "ok": True, "batch_id": bid, "readonly": True,
+        "source": "qc_daily/harness.py → _DEMO_PLAN（判定链唯一读取的原始数据）",
+        "rows": rows,
+        "note": "注意：samples/稻谷验收_假数据.csv 和 qc_source.db 里也有同名批次，"
+                "那是另一份演练数据（水分写的是 1.45），不要和判定链这份混用。",
+    })
