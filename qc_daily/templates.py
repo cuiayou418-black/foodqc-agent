@@ -71,6 +71,55 @@ footer.report-foot { margin-top: 30px; padding-top: 12px; border-top: 1px solid 
 """
 
 
+#: 日报「需关注」筛选条件（2026-11-08 小崔定）：只展示异常，正常项汇总不逐条列。
+#: 命中任一条才单独列出；都不命中的记录只进汇总句。
+#: ⚠️「接近限值但未超标」按小崔口径属于**正常范围、未超标**，只汇总提示，
+#: 不逐条列——否则 16 项次里会列出 14 条，日报失去重点。
+ATTENTION_RULES = [
+    ("超标 / 低于下限", "代码判定为「不合格」（实测值越过限值）"),
+    ("真值未知 / 不判", "缺限值，或实测值含比较符 / 非数字 / 未检出 —— 系统不猜、不判"),
+    ("录入疑点", "录入层标出的疑似敲错（只标疑点，不改数、不改判定）"),
+]
+NEAR_LIMIT_RATIO = 0.8   # 仅用于汇总提示，不作为逐条展示条件
+
+
+def _attention_rows(qc_details: list[dict], suspects: list[dict]):
+    """按 ATTENTION_RULES 筛选需关注记录。
+
+    返回 (关注行 [(原因, 记录dict)], 正常项条数, 各原因计数, 接近限值但未超标条数)。
+    判定逻辑完全不在这里产生：verdict / ratio 都读自已由 models.compare() 算好的快照。
+    """
+    suspect_keys = {(str(s.get("batch_id", "")), str(s.get("item", "")))
+                    for s in (suspects or [])}
+    attention: list[tuple[str, dict]] = []
+    normal = 0
+    near_only = 0
+    counts = {name: 0 for name, _ in ATTENTION_RULES}
+    for r in (qc_details or []):
+        verdict = str(r.get("verdict", ""))
+        try:
+            ratio = float(r.get("ratio") or 0)
+        except (TypeError, ValueError):
+            ratio = 0.0
+        key = (str(r.get("batch_id", "")), str(r.get("item", "")))
+        reasons: list[str] = []
+        if verdict == "不合格":
+            reasons.append("超标 / 低于下限")
+        elif verdict == "不判":
+            reasons.append("真值未知 / 不判")
+        if key in suspect_keys:
+            reasons.append("录入疑点")
+        if reasons:
+            for x in reasons:
+                counts[x] += 1
+            attention.append(("＋".join(dict.fromkeys(reasons)), r))
+        else:
+            normal += 1
+            if verdict == "合格" and ratio >= NEAR_LIMIT_RATIO:
+                near_only += 1
+    return attention, normal, counts, near_only
+
+
 def _pct(x: float, digits: int = 2) -> str:
     return f"{x * 100:.{digits}f}%"
 
@@ -126,6 +175,52 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
     if warnings:
         add(f"<div class='notice'>⚠️ 数据校验提示（{len(warnings)} 项）："
             f"{'；'.join(w.message for w in warnings[:5])}</div>")
+
+    # ---------- 结论先行 + 展示口径（2026-11-08 小崔定：结果导向、只列异常） ----------
+    qc_all = meta.get("qc_details") or []
+    suspects_all = meta.get("suspects") or []
+    attention, normal_n, reason_counts, near_only = _attention_rows(qc_all, suspects_all)
+    attention_batches = sorted({str(r.get("batch_id", "")) for _, r in attention})
+    fail_n = sum(1 for _, r in attention if r.get("verdict") == "不合格")
+    nojudge_n = sum(1 for _, r in attention if r.get("verdict") == "不判")
+
+    add("<h2>今日结论（结果导向）</h2>")
+    if attention:
+        lead = (f"今日共 <b>{len(qc_all)}</b> 项次纳入判定：<b>{fail_n}</b> 项次超标（涉及 "
+                f"<b>{len(attention_batches)}</b> 个批次）需逐条核对；"
+                f"真值未知不判 <b>{nojudge_n}</b> 项次、录入疑点 "
+                f"<b>{reason_counts['录入疑点']}</b> 项次。<br>"
+                f"其余 <b>{normal_n}</b> 项次在限值内、未超标，<b>不单独展示</b>"
+                f"（其中 {near_only} 项次接近限值但未超标，仅在此提示，不逐条列）。")
+        add(f"<div class='notice'>{lead}<br>"
+            "<b>需人工处理：</b>下面「需关注明细」逐条给出实测值、限值、标准号与出处；"
+            "Agent 只把该看的行指出来，<b>不放行、不替代签字</b>，收不收由人定。</div>")
+    else:
+        near_note = (f"其中 {near_only} 项次接近限值但未超标，仅作提示。" if near_only else "")
+        add(f"<div class='notice'>今日 {len(qc_all)} 项次全部在限值内、未超阈值，"
+            f"无超标、无录入疑点、无真值未知项。{near_note}"
+            "<b>明细不逐条罗列。</b>放行仍以人工复核签字为准。</div>")
+
+    # 筛选条件与最终展示范围（必须写在日报里，让看的人知道为什么只看到这几行）
+    rule_lines = "".join(
+        f"<li><b>{escape(name)}</b>：{escape(desc)}</li>" for name, desc in ATTENTION_RULES)
+    add("<div class='trace' style='margin:10px 0 18px'>")
+    add("<div style='font-weight:700;margin-bottom:4px'>本日报的展示口径（筛选条件与范围）</div>")
+    add("<p style='margin:4px 0'><b>筛选条件</b>：逐条记录命中下列任一条，才单独列出：</p>")
+    add(f"<ul style='margin:4px 0 10px 20px'>{rule_lines}</ul>")
+    add(f"<p style='margin:4px 0'><b>最终展示范围</b>：本次逐条展示 "
+        f"<b>{len(attention)}</b> 条需关注记录"
+        f"（超标 {reason_counts['超标 / 低于下限']} · 真值未知/不判 "
+        f"{reason_counts['真值未知 / 不判']} · 录入疑点 {reason_counts['录入疑点']}，"
+        f"同一条可同时命中多条）；其余 <b>{normal_n}</b> 条未超标项<b>不单独展示</b>，"
+        "只作本段汇总说明，不在任何明细表中逐条罗列。</p>")
+    add(f"<p style='margin:4px 0'><b>特别说明</b>：另有 <b>{near_only}</b> 项次"
+        f"「接近限值」（利用率 ≥ {int(NEAR_LIMIT_RATIO * 100)}%）但<b>未超标</b>，"
+        "按口径归为正常范围，只在此汇总提示、不逐条列；如要单独关注，"
+        "需另行调整阈值口径，由人确认后再改。</p>")
+    add("<p style='margin:4px 0;color:#8f959e'>判定本身由代码按配置限值产生，"
+        "与展示筛选无关：筛选只决定「哪几行给人看」，不改变任何 verdict。</p>")
+    add("</div>")
 
     # ---------- KPI ----------
     crit = sum(1 for a in m.alerts if a.level == "critical")
@@ -197,15 +292,47 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
         f"<td class='num'>{_pct(m.batch_pass_rate) if has_prod else '—'}</td>"
         f"<td class='num'>{m.planned_qty:g}</td><td class='num'>{m.actual_qty:g}</td></tr></table>")
 
-    add("<h3>分检测项目合格率</h3>")
-    add("<table><tr><th>检测项目</th><th>单位</th><th class='num'>检测项次</th>"
-        "<th class='num'>不合格项次</th><th class='num'>合格率</th><th>判定</th></tr>")
-    for it in m.items:
-        cls = " class='fail'" if it.fail else ""
-        add(f"<tr{cls}><td>{it.item}</td><td>{it.unit}</td><td class='num'>{it.total}</td>"
-            f"<td class='num'>{it.fail}</td><td class='num'>{_pct(it.pass_rate)}</td>"
-            f"<td>{_tag('合格' if it.fail == 0 else '不合格')}</td></tr>")
-    add("</table>")
+    # 只列需要关注的项目；全部合格的项目汇总成一句，不逐条列（结果导向、避免全量罗列）
+    add("<h3>分检测项目（仅列需关注项）</h3>")
+    watch_items = [it for it in m.items if it.fail > 0]
+    ok_items = [it for it in m.items if it.fail == 0]
+    if watch_items:
+        add("<table><tr><th>检测项目</th><th>单位</th><th class='num'>检测项次</th>"
+            "<th class='num'>不合格项次</th><th class='num'>合格率</th><th>判定</th></tr>")
+        for it in watch_items:
+            add(f"<tr class='fail'><td>{it.item}</td><td>{it.unit}</td><td class='num'>{it.total}</td>"
+                f"<td class='num'>{it.fail}</td><td class='num'>{_pct(it.pass_rate)}</td>"
+                f"<td>{_tag('不合格')}</td></tr>")
+        add("</table>")
+    else:
+        add("<div class='notice'>今日所有检测项目均未出现不合格项次，本表不逐条罗列。</div>")
+    if ok_items:
+        add(f"<p style='color:#8f959e;margin-top:6px'>另有 <b>{len(ok_items)}</b> 个检测项目"
+            f"（{ '、'.join(escape(it.item) for it in ok_items[:8]) }"
+            f"{'…' if len(ok_items) > 8 else ''}）全部合格、未超阈值，"
+            "按展示口径仅作本句汇总，不单独列出。</p>")
+
+    # ---- 需关注明细：逐条给出依据，只列命中筛选条件的记录 ----
+    add("<h2>需关注明细（逐条结论与依据）</h2>")
+    if attention:
+        add("<table><tr><th>批次号</th><th>检测项目</th><th>需关注原因</th>"
+            "<th class='num'>实测值</th><th>方向</th><th class='num'>限值</th><th>判定</th>"
+            "<th>标准号</th><th>条款出处</th></tr>")
+        for reason, r in attention:
+            cls = " class='fail'" if r.get("verdict") == "不合格" else (
+                  " class='warn'" if r.get("verdict") == "不判" else "")
+            add(f"<tr{cls}><td><code>{escape(str(r.get('batch_id', '')))}</code></td>"
+                f"<td>{escape(str(r.get('item', '')))}</td>"
+                f"<td>{escape(reason)}</td>"
+                f"<td class='num'>{escape(str(r.get('value', '')))}</td>"
+                f"<td>{escape(str(r.get('direction', '')))}</td>"
+                f"<td class='num'>{escape(str(r.get('limit_value', '')))}</td>"
+                f"<td>{escape(str(r.get('verdict', '')))}</td>"
+                f"<td>{escape(str(r.get('standard', '')))}</td>"
+                f"<td>{escape(str(r.get('limit_source', '')))}</td></tr>")
+        add("</table>")
+    else:
+        add("<div class='notice'>今日无需关注记录（无超标、无接近限值、无录入疑点、无真值未知项）。</div>")
 
     # ---------- 二、缺陷分布 ----------
     add("<h2>二、缺陷分布</h2>")
@@ -305,10 +432,16 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
         "本报告仅作过程监控参考，放行决策以人工复核与检验报告为准。</p>")
     add("</div>")
 
-    # ---------- 附：质检明细（逐条结论的标准号与条款出处） ----------
+    # ---------- 附：全量快照（默认折叠，供审计复算；不占日报主视图） ----------
+    # 2026-11-08 小崔定：日报只列需关注项，正常项汇总不逐条罗列。
+    # 全量逐条数据仍保留给审计/复算，但收进折叠区，避免主视图变成全量台账。
     qc_details = meta.get("qc_details") or []
     if qc_details:
-        add("<h2>附：质检明细（逐条结论与依据）</h2>")
+        add("<details style='margin-top:18px;border-top:1px solid #e3e6eb;padding-top:10px'>")
+        add(f"<summary style='cursor:pointer;color:#4b535c;font-weight:600'>"
+            f"附：全量质检快照（{len(qc_details)} 条，审计复算用，默认收起）</summary>")
+        add("<p style='color:#8f959e;margin:6px 0'>日常阅读不需要展开。"
+            "主视图只展示需关注项；此区保留全部逐条记录供指纹复算与追溯。</p>")
         add("<table><tr><th>批次号</th><th>检测项目</th><th class='num'>实测值</th>"
             "<th>方向</th><th class='num'>限值</th><th>判定</th>"
             "<th>标准号</th><th>条款出处</th></tr>")
@@ -322,7 +455,7 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
                 f"<td>{escape(str(r.get('verdict', '')))}</td>"
                 f"<td>{escape(str(r.get('standard', '')))}</td>"
                 f"<td>{escape(str(r.get('limit_source', '')))}</td></tr>")
-        add("</table>")
+        add("</table></details>")
 
     add("<div class='notice error' style='margin-top:14px'>"
         "本结论仅供复核，最终由人签字放行；系统不改数值、不自动判合格、不替代人工签字。</div>")
