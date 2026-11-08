@@ -104,7 +104,11 @@ def _norm_header(h) -> str:
     全角括号必须先转半角：国内化验室的表几乎都写 `出糙率（%）`，
     原先只匹配半角 `()`，导致整张 31 列的表一列都认不出来（2026-11-08 实测）。
     """
-    s = str(h or "").strip().lower().replace(" ", "").replace("　", "")
+    s = str(h or "").strip().lower()
+    # 化验室表头常在列名里硬换行（'水分\n (%)'、'出糙率\n（%）'）。
+    # 只去空格不清换行时，归一化结果是 '水分\n'，跟词典里的 '水分' 对不上，
+    # 整张 32 列真表一列都认不出（2026-11-08 晚实测）。连同制表/不间断空格一起清。
+    s = re.sub(r"[\s\u00a0\u3000]+", "", s)
     s = s.replace("（", "(").replace("）", ")").replace("［", "[").replace("］", "]")
     s = re.sub(r"\([^)]*\)", "", s)
     s = re.sub(r"\[[^\]]*\]", "", s)
@@ -400,6 +404,19 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
         date_h = (next((h for h, f in mapping.items() if f == "tested_at"), None)
                   or next((h for h, f in mapping.items() if f == "occurred_at"), None))
         insp_h = next((h for h, f in mapping.items() if f == "inspector"), None)
+        # 化验室送检表常在右侧「系统判定区」为每个检测项目单独带限值列
+        # （如「出糙率限值」「整精米率限值」）。表内自带的限值以表为准：
+        # 出处可逐行追溯，也不受 config 里 active_limits_verified 版本门禁影响。
+        # 没有这些列时完全回落原来的 item_spec 行为，向后兼容。
+        per_item_limit: dict[str, str] = {}
+        for h in records[0].keys():
+            nh = _norm_header(h)
+            for item in set(item_cols.values()):
+                if nh == _norm_header(item) + "限值":
+                    per_item_limit[item] = h
+        dir_h = next((h for h, f in mapping.items() if f == "direction"), None)
+        std_h = next((h for h, f in mapping.items() if f == "standard"), None)
+        src_h = next((h for h, f in mapping.items() if f == "limit_source"), None)
         if not batch_h:
             notes.append("⛔ 宽表缺少批次列，无法导入")
             return [], notes
@@ -421,11 +438,18 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
                             "按原文保留，未参与比较（含比较符或不是数字时真值未知）")
                     continue
                 spec = item_spec(config, product, item)
+                lim_col = per_item_limit.get(item)
+                row_limit = _to_limit_float(rec.get(lim_col)) if lim_col else None
                 rows.append({
                     "batch_id": batch_id, "product": product, "item": item, "value": val,
-                    "unit": spec.get("unit", ""), "direction": spec.get("direction", "≤"),
-                    "limit_value": spec.get("limit"), "standard": spec.get("standard", ""),
-                    "limit_source": spec.get("limit_source", ""),
+                    "unit": spec.get("unit", ""),
+                    "direction": (_to_text(rec.get(dir_h)) if dir_h else "")
+                                 or spec.get("direction", "≤"),
+                    "limit_value": row_limit if row_limit is not None else spec.get("limit"),
+                    "standard": (_to_text(rec.get(std_h)) if std_h else "")
+                                or spec.get("standard", ""),
+                    "limit_source": (_to_text(rec.get(src_h)) if src_h else "")
+                                    or spec.get("limit_source", ""),
                     "tested_at": tested_at, "inspector": inspector, "lab": "",
                 })
         return rows, notes
