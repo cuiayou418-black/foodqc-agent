@@ -648,13 +648,18 @@ def _peek_table(p: Path) -> tuple[int, str]:
                             dates[str(v).strip()[:10]] = dates.get(str(v).strip()[:10], 0) + 1
         else:
             import openpyxl
+            from .importer import guess_header_row
             wb = openpyxl.load_workbook(p, read_only=True, data_only=True)
             ws = wb[wb.sheetnames[0]]
-            it = ws.iter_rows(values_only=True)
-            head = next(it, None) or ()
+            all_rows = [list(r) for r in ws.iter_rows(values_only=True)]
+            # 化验室的原始表上面常压着标题行/业务说明行（送检水稻检测就是第 3 行
+            # 才是表头）。硬取第 1 行会一列日期都找不到 → 回退今天 → 与表内日期
+            # 不匹配而拒跑（2026-11-08 演示前实测）。与导入层共用同一套探测。
+            hi = guess_header_row(all_rows)
+            head = all_rows[hi] if hi < len(all_rows) else ()
             idx = [i for i, h in enumerate(head) if h and "日期" in str(h)]
-            for row in it:
-                if not any(row):
+            for row in all_rows[hi + 1:]:
+                if not any(c is not None and str(c).strip() for c in row):
                     continue
                 rows += 1
                 for i in idx:
