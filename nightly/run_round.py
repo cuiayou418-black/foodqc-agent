@@ -26,7 +26,7 @@ import socket
 import subprocess
 import sys
 import time
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
@@ -34,8 +34,11 @@ BASE = "http://127.0.0.1:8000"
 UPLOAD_DIR = REPO / "qc_daily_data" / "task_uploads"
 OUT_DIR = Path(__file__).resolve().parent / "rounds"
 STATE = Path(__file__).resolve().parent / "state.json"
+NIGHTLY_STATE = Path(__file__).resolve().parent / "state-nightly.json"
 ROUNDS = 6          # 00:00–05:00，每小时一轮共 6 轮
 PER_ROUND = 9       # 每轮 9 个场景，覆盖问答/表格/畸形/拒绝/页面
+# 每晚巡检：按日期轮换轮次（6 天覆盖全部 53 个场景后循环），日志按日期归档。
+# 与一次性整夜巡检（state.json / rounds/round-NN.md）互不干扰。
 
 sys.path.insert(0, str(REPO))
 
@@ -468,7 +471,7 @@ def _fmt_facts(f: dict) -> list[str]:
     return lines
 
 
-def run_round(n: int) -> int:
+def run_round(n: int, nightly_tag: str = "") -> int:
     all_sc = build_scenarios()
     start = (n - 1) * PER_ROUND
     batch = all_sc[start:start + PER_ROUND]
@@ -502,10 +505,15 @@ def run_round(n: int) -> int:
 
     meta["finished_at"] = datetime.now().isoformat(timespec="seconds")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
-    stem = f"round-{n:02d}"
+    stem = f"round-{n:02d}" if not nightly_tag else f"nightly-{nightly_tag}-r{n:02d}"
+    if nightly_tag:
+        # state 只存纯日期（YYYY-MM-DD），同日重试的 -b 后缀只用于日志文件名
+        meta["nightly_date"] = nightly_tag.split("-b")[0] if nightly_tag.endswith("-b") else nightly_tag
     (OUT_DIR / f"{stem}.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    md = [f"# 第 {n}/{ROUNDS} 轮 · {meta['started_at']}", "",
+    head = (f"# 每晚巡检 · {nightly_tag} · 第 {n}/{ROUNDS} 轮" if nightly_tag
+            else f"# 第 {n}/{ROUNDS} 轮")
+    md = [head, f" · {meta['started_at']}", "",
           f"服务：{meta['server']}", ""]
     if meta.get("fatal"):
         md += [f"**{meta['fatal']}**", ""]
@@ -519,14 +527,54 @@ def run_round(n: int) -> int:
         md.append("")
     (OUT_DIR / f"{stem}.md").write_text("\n".join(md), encoding="utf-8")
 
-    STATE.write_text(json.dumps({"next_round": n + 1, "last_round": n,
-                                 "last_at": meta["finished_at"]}, ensure_ascii=False, indent=2),
-                     encoding="utf-8")
+    state_file = STATE if not nightly_tag else NIGHTLY_STATE
+    old = {}
+    if nightly_tag and state_file.exists():
+        try:
+            old = json.loads(state_file.read_text(encoding="utf-8"))
+        except Exception:
+            old = {}
+    payload = {"next_round": n + 1, "last_round": n,
+               "last_at": meta["finished_at"]}
+    if nightly_tag:
+        payload["last_date"] = (nightly_tag[:-2] if nightly_tag.endswith("-b")
+                                else nightly_tag)
+        payload["cycles_done"] = int(old.get("cycles_done", 0)) + (1 if n == ROUNDS else 0)
+    state_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    nxt = n + 1 if n < ROUNDS else None
-    print(f"\nROUND={n} OF={ROUNDS} NEXT={nxt or 'NONE'}")
+    nxt = n + 1 if n < ROUNDS else 1      # 每晚巡检：跑满 6 轮后从 1 重新循环
+    print(f"\nROUND={n} OF={ROUNDS} NEXT={nxt}")
+    if nightly_tag:
+        print(f"DATE={nightly_tag} MODE=NIGHTLY")
     print(f"日志：nightly/rounds/{stem}.md")
     return 0
+
+
+def run_nightly() -> int:
+    """每晚一次：按日期轮换轮次，日志按天归档，同一天重跑不覆盖、不重复计数。
+
+    6 轮跑满后自动从第 1 轮重新循环，这样 53 个场景能一直轮着测，
+    且不会像原一次性巡检那样 next_round=7 之后直接结束。
+    """
+    today = date.today().isoformat()
+    prev: dict = {}
+    if NIGHTLY_STATE.exists():
+        try:
+            prev = json.loads(NIGHTLY_STATE.read_text(encoding="utf-8"))
+        except Exception:
+            prev = {}
+    same_day = prev.get("last_date") == today
+    n = int(prev.get("next_round", 1))
+    if n < 1 or n > ROUNDS:
+        n = 1
+    if same_day:
+        # 同一天再触发（例如重试）接着跑下一轮，但不覆盖已有日志
+        tag = f"{today}-b"
+    else:
+        tag = today
+    print(f"=== 每晚巡检 {today} · 第 {n}/{ROUNDS} 轮"
+          f"{'（当日第 2 次触发，日志加 -b）' if same_day else ''} ===")
+    return run_round(n, nightly_tag=tag)
 
 
 def run_next() -> int:
@@ -552,8 +600,12 @@ def main() -> int:
     ap.add_argument("--round", type=int, default=0, help="指定轮次（1-8）")
     ap.add_argument("--list", action="store_true", help="列出全部轮次与场景")
     ap.add_argument("--reset", action="store_true", help="把进度重置到第 1 轮")
+    ap.add_argument("--nightly", action="store_true",
+                    help="每晚巡检：按日期轮换一轮、日志按天归档，6 轮后自动循环")
     a = ap.parse_args()
 
+    if a.nightly:
+        return run_nightly()
     if a.reset:
         STATE.write_text(json.dumps({"next_round": 1}), encoding="utf-8")
         print("进度已重置为第 1 轮")
