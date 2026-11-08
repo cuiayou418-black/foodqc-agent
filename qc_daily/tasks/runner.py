@@ -202,6 +202,17 @@ class TaskRunner:
             res.notes.append("下一步：按错误修正对应文件后重跑；其余可读文件已保留。")
             self._trace(res, "failed", "import_errors", str(summary["errors"])[:400])
             return ctx
+        # 导入层已经判死（如"宽表缺少批次列"）时，先报这个。
+        # 不然会掉进下面的日期检查，报一句"日期不匹配"把人指去改日期——
+        # 真实原因是一列都没读进来（2026-11-08 拿真表实测踩到）
+        blocked = [n for n in summary["notes"] if "⛔" in n]
+        if no_rows and blocked:
+            res.status = "failed"
+            res.errors.append(blocked[0].split("⛔", 1)[-1].strip(" ：:"))
+            res.notes.append("下一步：按上一条补齐后重跑；没有批次号列的表，改成一"
+                            "行一项的长表（批次号 / 检测项目 / 实测值 / 限值）也能跑。")
+            self._trace(res, "failed", "import_blocked", str(blocked)[:300])
+            return ctx
         if req.report_date not in summary["dates"]:
             res.status = "failed"
             res.errors.append(

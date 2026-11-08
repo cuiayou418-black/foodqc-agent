@@ -99,10 +99,55 @@ DATE_FIELD = {"production": "started_at", "quality": "tested_at", "warehouse": "
 # ------------------------------------------------------------------ 基础工具
 
 def _norm_header(h) -> str:
-    """表头归一化：去空格/小写，并剥离括号后缀（'计划产量(t)' → '计划产量'）。"""
+    """表头归一化：去空格/小写，并剥离括号后缀（'计划产量(t)' → '计划产量'）。
+
+    全角括号必须先转半角：国内化验室的表几乎都写 `出糙率（%）`，
+    原先只匹配半角 `()`，导致整张 31 列的表一列都认不出来（2026-11-08 实测）。
+    """
     s = str(h or "").strip().lower().replace(" ", "").replace("　", "")
+    s = s.replace("（", "(").replace("）", ")").replace("［", "[").replace("］", "]")
     s = re.sub(r"\([^)]*\)", "", s)
+    s = re.sub(r"\[[^\]]*\]", "", s)
     return s
+
+
+_KNOWN_HEADER_NORMS: set[str] | None = None
+
+
+def _known_header_norms() -> set[str]:
+    """所有"能被认出来"的表头写法（规范字段别名 + 检测项目名），用于猜表头在第几行。"""
+    global _KNOWN_HEADER_NORMS
+    if _KNOWN_HEADER_NORMS is None:
+        s: set[str] = set()
+        for aliases in ALIASES.values():
+            s.update(_norm_header(a) for a in aliases)
+        s.update(_norm_header(i) for i in KNOWN_ITEMS)
+        _KNOWN_HEADER_NORMS = {x for x in s if x}
+    return _KNOWN_HEADER_NORMS
+
+
+def guess_header_row(rows: list, scan: int = 8) -> int:
+    """在前几行里找真正的表头行。
+
+    化验室的原始记录表，上面常压着「××公司 送检水稻检测」「黄色信息需重点确认」这类
+    标题/说明行。原先硬取第 1 行，整张表一列都认不出来，还报成"日期不匹配"，
+    把人指去改日期（2026-11-08 实测）。
+    评分 = 这一行里有多少格能对上已知表头写法；都认不出来时退回第一行非空行。
+    """
+    known = _known_header_norms()
+    first_nonempty = next((i for i, r in enumerate(rows[:scan])
+                           if any(c is not None and str(c).strip() for c in r)), None)
+    if first_nonempty is None:
+        return 0
+    best_i, best_score = first_nonempty, 0
+    for i, row in enumerate(rows[:scan]):
+        cells = [c for c in row if c is not None and str(c).strip()]
+        if not cells:
+            continue
+        score = sum(1 for c in cells if _norm_header(c) in known)
+        if score > best_score:
+            best_i, best_score = i, score
+    return best_i if best_score >= 2 else first_nonempty
 
 
 def _to_float(v) -> Optional[float]:
@@ -159,10 +204,7 @@ def _read_xlsx(path: str) -> list[tuple[str, list[dict]]]:
         rows = list(ws.iter_rows(values_only=True))
         if not rows:
             continue
-        header_idx = next((i for i, r in enumerate(rows)
-                           if any(c is not None and str(c).strip() for c in r)), None)
-        if header_idx is None:
-            continue
+        header_idx = guess_header_row(rows)
         headers = [_to_text(h) for h in rows[header_idx]]
         records = []
         for r in rows[header_idx + 1:]:
@@ -188,10 +230,11 @@ def _read_csv(path: str) -> list[tuple[str, list[dict]]]:
         raise ValueError(f"无法识别文件编码: {path}")
     if not rows:
         return []
-    headers = [h.strip() for h in rows[0]]
+    hi = guess_header_row(rows)
+    headers = [h.strip() for h in rows[hi]]
     records = [{headers[i] if i < len(headers) else f"col{i}": (r[i] if i < len(r) else "")
                 for i in range(len(headers))}
-               for r in rows[1:] if any(c.strip() for c in r)]
+               for r in rows[hi + 1:] if any(c.strip() for c in r)]
     return [(os.path.splitext(os.path.basename(path))[0], records)]
 
 
@@ -316,11 +359,21 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
             item_cols[h] = norm_to_item[nh]
     is_wide_quality = (ttype == "quality" and "item" not in mapping.values()
                        and "value" not in mapping.values() and item_cols)
+    # 一列项目名都认不出来时，不能静默走长表分支变成 0 条记录——
+    # 那样最后只会报一句"日期不匹配"，把人指去改日期（2026-11-08 实测）
+    if not is_wide_quality and ttype == "quality" and "item" not in mapping.values() \
+            and "value" not in mapping.values() and records:
+        guess = [str(h) for h in list(records[0].keys())[:12]]
+        notes.append("⛔ 没认出任何检测项目列；当前表头是：" + "、".join(guess))
+        notes.append("下一步：把检测项目写进表头（如「水分含量」「出糙率」），或改成一行一项的长表")
     if is_wide_quality:
         notes.append(f"识别为宽表质检格式，已自动翻转 {len(item_cols)} 个检测项目列")
         batch_h = next((h for h, f in mapping.items() if f == "batch_id"), None)
         prod_h = next((h for h, f in mapping.items() if f == "product"), None)
-        date_h = next((h for h, f in mapping.items() if f == "tested_at"), None)
+        # 化验室表里日期那一列常就写「日期」，它会被映射成 occurred_at；
+        # 宽表质检只有一个日期列，认它就行，不必死等 tested_at
+        date_h = (next((h for h, f in mapping.items() if f == "tested_at"), None)
+                  or next((h for h, f in mapping.items() if f == "occurred_at"), None))
         insp_h = next((h for h, f in mapping.items() if f == "inspector"), None)
         if not batch_h:
             notes.append("⛔ 宽表缺少批次列，无法导入")
