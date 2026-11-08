@@ -364,10 +364,14 @@ def validate_collected(data: CollectedData, config: QCDailyConfig) -> list[Valid
             if seen_batches:
                 issues.append(ValidationIssue("error", "ORPHAN_QC",
                                               f"质检记录引用了不存在的批次: {r.batch_id}", r.record_id))
-        if r.value != r.value or r.value in (float("inf"), float("-inf")):
-            issues.append(ValidationIssue("error", "BAD_VALUE", f"检测值非法: {r.record_id}", r.record_id))
-        if r.limit_value <= 0:
-            issues.append(ValidationIssue("error", "BAD_LIMIT", f"限值非正数: {r.record_id}", r.record_id))
+        # 旧版只查 NaN：None != None 为 False，空值正好从这道闸门底下走过去，
+        # 一路流到 models.compare 抛英文 TypeError 崩整单（2026-11-08 夜测 S6）
+        if r.value is None or r.value != r.value or r.value in (float("inf"), float("-inf")):
+            issues.append(ValidationIssue("error", "BAD_VALUE",
+                                          f"检测值读不出来或非法: {r.record_id}", r.record_id))
+        if r.limit_value is None or r.limit_value <= 0:
+            issues.append(ValidationIssue("error", "BAD_LIMIT",
+                                          f"限值缺失或非正数: {r.record_id}", r.record_id))
 
     # 4. 仓储记录
     for r in data.warehouse:

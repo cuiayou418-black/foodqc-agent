@@ -367,10 +367,16 @@ class TaskRunner:
 
         m = result.metrics
         if m is not None:
+            # 没采集到生产记录时，一次交验合格率 / 异常批次都是算不出来的。
+            # 旧版照印 0.00% 与 0，和同页「不合格项次 2」自相矛盾（夜测 S2/S3）。
+            has_prod = bool(getattr(m, "batch_count", 0))
             ctx["metrics"] = {
-                "pass_rate": m.pass_rate, "batch_pass_rate": m.batch_pass_rate,
+                "pass_rate": m.pass_rate,
+                "batch_pass_rate": m.batch_pass_rate if has_prod else "—（无生产记录）",
                 "total_tests": m.total_tests, "fail_tests": m.fail_tests,
-                "abnormal_batches": len(m.abnormal_batches),
+                "abnormal_batches": (len(m.abnormal_batches) if has_prod
+                                     else "—（无生产记录）"),
+                "has_production": has_prod,
                 "defect_distribution": {d["item"]: d["fail"]
                                         for d in (m.defect_distribution or [])},
                 "trend": [f"{t.date}:{t.pass_rate:.2%}" for t in (m.trend_points or [])],
@@ -493,7 +499,10 @@ class TaskRunner:
             ctx["suspects"] = [s.to_dict() for s in validate_records(rows)]
         if not ctx.get("sections"):
             ctx["sections"] = self._sections(ctx, res)
-        ctx.setdefault("checkpoints", self._checkpoints(ctx, res))
+        # ctx 初始化时已经有 "checkpoints": []，setdefault 永远不会生效 ——
+        # 第 7 节「人工核对指路」成了只有标题的空壳，却被算作「8 块齐全」（夜测 M7）
+        if not ctx.get("checkpoints"):
+            ctx["checkpoints"] = self._checkpoints(ctx, res)
 
         if spec.auxiliary and spec.engine == "B":
             ctx["outputs"] = ctx.get("outputs") or ["answer.txt"]

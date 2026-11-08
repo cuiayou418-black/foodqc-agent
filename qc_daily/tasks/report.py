@@ -31,7 +31,8 @@ def _pct(v) -> str:
     try:
         return f"{float(v):.2%}"
     except (TypeError, ValueError):
-        return "-"
+        # 上游可以直接给「—（无生产记录）」这类人话，别把它吞成一个干巴巴的 "-"
+        return str(v) if isinstance(v, str) and v else "-"
 
 
 def _ul(items, empty="（无）") -> str:

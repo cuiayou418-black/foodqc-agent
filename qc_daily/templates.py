@@ -132,21 +132,25 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
     warn = sum(1 for a in m.alerts if a.level == "warning")
     info = sum(1 for a in m.alerts if a.level == "info")
     pass_cls = "ok" if m.pass_rate >= 0.98 else ("bad" if m.pass_rate < 0.95 else "warn")
+    # 没采集到生产记录时，一次交验合格率 / 异常批次 / 批次列都算不出来，
+    # 不许印 0.00% 或 0 让签字人误读（2026-11-08 夜测 S2/S3）
+    has_prod = m.batch_count > 0
+    na = "—（无生产记录）"
     add("<div class='kpi-row'>")
     add(f"<div class='kpi {pass_cls}'><div class='label'>总体合格率</div>"
         f"<div class='value'>{_pct(m.pass_rate)}</div>"
         f"<div class='hint'>{m.total_tests - m.fail_tests}/{m.total_tests} 项次合格</div></div>")
     add(f"<div class='kpi'><div class='label'>一次交验合格率</div>"
-        f"<div class='value'>{_pct(m.batch_pass_rate)}</div>"
-        f"<div class='hint'>全部项目一次通过的批次占比</div></div>")
+        f"<div class='value'>{_pct(m.batch_pass_rate) if has_prod else na}</div>"
+        f"<div class='hint'>{'全部项目一次通过的批次占比' if has_prod else '未采集到生产记录，本项不计算'}</div></div>")
     add(f"<div class='kpi'><div class='label'>产量达成率</div>"
         f"<div class='value'>{_pct(m.achievement, 1) if m.planned_qty > 0 else '无产量数据'}</div>"
         f"<div class='hint'>{f'{m.actual_qty:g} / {m.planned_qty:g} 吨 · {m.batch_count} 批次' if m.planned_qty > 0 else '未采集到生产记录'}</div></div>")
     add(f"<div class='kpi {'bad' if m.abnormal_batches else 'ok'}'><div class='label'>异常批次</div>"
-        f"<div class='value'>{len(m.abnormal_batches)}</div>"
-        f"<div class='hint'>不合格 {sum(1 for b in m.abnormal_batches if b.level == 'critical')} · "
-        f"预警 {sum(1 for b in m.abnormal_batches if b.level == 'warning')} · "
-        f"提示 {sum(1 for b in m.abnormal_batches if b.level == 'info')}</div></div>")
+        f"<div class='value'>{len(m.abnormal_batches) if has_prod else na}</div>"
+        f"<div class='hint'>{'不合格 ' + str(sum(1 for b in m.abnormal_batches if b.level == 'critical')) + ' · ' if has_prod else ''}"
+        f"{('预警 ' + str(sum(1 for b in m.abnormal_batches if b.level == 'warning')) + ' · ') if has_prod else ''}"
+        f"{('提示 ' + str(sum(1 for b in m.abnormal_batches if b.level == 'info'))) if has_prod else '未采集到生产记录，本项不计算'}</div></div>")
     add(f"<div class='kpi {'bad' if crit else 'ok'}'><div class='label'>当日预警</div>"
         f"<div class='value'>{len(m.alerts)}</div>"
         f"<div class='hint'>严重 {crit} · 警告 {warn} · 提示 {info}</div></div>")
@@ -182,13 +186,15 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
         "<th class='num'>计划产量(t)</th><th class='num'>实际产量(t)</th></tr>")
     for p in m.products:
         cls = " class='fail'" if p.fail_tests else ""
-        add(f"<tr{cls}><td>{p.product}</td><td class='num'>{p.batches}</td>"
+        add(f"<tr{cls}><td>{p.product}</td><td class='num'>{p.batches if has_prod else '—'}</td>"
             f"<td class='num'>{p.total_tests}</td><td class='num'>{p.fail_tests}</td>"
-            f"<td class='num'>{_pct(p.pass_rate)}</td><td class='num'>{_pct(p.batch_pass_rate)}</td>"
+            f"<td class='num'>{_pct(p.pass_rate)}</td>"
+            f"<td class='num'>{_pct(p.batch_pass_rate) if has_prod else '—'}</td>"
             f"<td class='num'>{p.planned_qty:g}</td><td class='num'>{p.actual_qty:g}</td></tr>")
-    add(f"<tr style='font-weight:700'><td>合计</td><td class='num'>{m.batch_count}</td>"
+    add(f"<tr style='font-weight:700'><td>合计</td><td class='num'>{m.batch_count if has_prod else '—'}</td>"
         f"<td class='num'>{m.total_tests}</td><td class='num'>{m.fail_tests}</td>"
-        f"<td class='num'>{_pct(m.pass_rate)}</td><td class='num'>{_pct(m.batch_pass_rate)}</td>"
+        f"<td class='num'>{_pct(m.pass_rate)}</td>"
+        f"<td class='num'>{_pct(m.batch_pass_rate) if has_prod else '—'}</td>"
         f"<td class='num'>{m.planned_qty:g}</td><td class='num'>{m.actual_qty:g}</td></tr></table>")
 
     add("<h3>分检测项目合格率</h3>")

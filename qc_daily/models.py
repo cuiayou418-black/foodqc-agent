@@ -103,10 +103,16 @@ class QCRecord:
         if not self.extracted_at:
             self.extracted_at = iso_now()
         # 硬闸门：判定只由代码产生，忽略外部传入的 verdict
-        self.verdict = "合格" if compare(self.value, self.limit_value, self.direction) else "不合格"
+        # 实测值/限值缺失时真值未知 → 不猜、不判，明确转人工（夜测 S6 的最后一道防线）
+        if self.value is None or self.limit_value is None:
+            self.verdict = "不判"
+        else:
+            self.verdict = "合格" if compare(self.value, self.limit_value, self.direction) else "不合格"
 
     @property
     def ratio(self) -> float:
+        if self.value is None or self.limit_value is None:
+            return 0.0          # 不判的项不参与「接近限值 / 异常批次」统计
         return utilization(self.value, self.limit_value, self.direction)
 
     @property

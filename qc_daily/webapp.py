@@ -86,11 +86,17 @@ def _report_files(cfg: QCDailyConfig, day: str) -> dict:
 
 
 def _report_rows(cfg: QCDailyConfig) -> list:
-    """日报列表数据：审计状态 + 历史指标 + 磁盘文件，三方合并。"""
+    """日报列表数据：审计状态 + 历史指标 + 磁盘文件，三方合并。
+
+    状态只取该日最新一条**成功**审计。旧版取最新一条（可能是后来失败的一次），
+    于是出现「失败 + 完整日报 + 完整性校验 ok」这种自相矛盾的行（夜测 M12）：
+    状态取新、文件取旧，中间没有任何 run_id 校对。失败记录在审计日志页完整保留。
+    """
     hist = {e["report_date"]: e for e in _history(cfg)}
     audit_by_date: dict[str, dict] = {}
-    for e in _audit(cfg):  # 倒序，同日期保留最新一条
-        audit_by_date.setdefault(e.get("report_date", ""), e)
+    for e in _audit(cfg):  # 倒序，同日期保留最新一条成功
+        if e.get("status") == "success":
+            audit_by_date.setdefault(e.get("report_date", ""), e)
 
     rows = []
     for day in sorted(set(hist) | set(audit_by_date), reverse=True):
@@ -98,12 +104,14 @@ def _report_rows(cfg: QCDailyConfig) -> list:
             continue
         h, a = hist.get(day, {}), audit_by_date.get(day, {})
         files = _report_files(cfg, day)
-        # 失败且无产出的运行不进日报列表（审计日志页已完整记录全部运行）
-        if a.get("status") == "failed" and not files:
+        if not a and not files:
             continue
+        # 有文件但没有成功审计：磁盘上是上次成功留下的旧报告，别冒充这次运行
+        status = "success" if a else "partial"
         rows.append({
             "date": day,
-            "status": a.get("status", "unknown"),
+            "status": status,
+            "note": "" if a else "磁盘上是上次成功留下的旧报告，本次没有成功运行",
             "pass_rate": h.get("pass_rate"),
             "fail_tests": h.get("fail_tests", 0),
             "total_tests": h.get("total_tests", 0),
@@ -443,8 +451,9 @@ def create_app(config: QCDailyConfig, with_scheduler: bool = False) -> Flask:
     # ---------- 错误页 ----------
     @app.errorhandler(404)
     def _404(e):
-        return tpl.page("页面不存在", "", f"""
-<div class='empty'><p>😕 {e.description or '页面不存在'}</p>
+        # 别读 e.description —— Werkzeug 那句是英文，兜底永远轮不到（夜测 M13）
+        return tpl.page("页面不存在", "", """
+<div class='empty'><p>没找到这个页面，可能是地址打错了，或者链接已经过期。</p>
 <a class='btn' href='/'>返回仪表盘</a></div>"""), 404
 
     return app

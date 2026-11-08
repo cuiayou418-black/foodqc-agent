@@ -43,10 +43,17 @@ def list_artifacts(run_id: str, output_root: str = "runs") -> list[dict]:
     if not run_dir.is_dir():
         return []
     out = []
+    # 用户上传的原表 / 采集快照 / 输入库都不是「产物」。旧版 rglob 全列，
+    # 失败任务会把那份坏 .xlsx 当成「下载 Excel 表」递回去（夜测 M3）。
+    skip_dirs = {"inputs", "snapshots"}
+    skip_files = {"input.db", ".DS_Store"}
     for p in sorted(run_dir.rglob("*")):
         if not p.is_file():
             continue
         rel = p.relative_to(run_dir).as_posix()
+        parts = rel.split("/")
+        if parts[0] in skip_dirs or rel in skip_files:
+            continue
         out.append({"name": rel, "size": p.stat().st_size,
                     "kind": p.suffix.lstrip(".") or "file"})
     return out

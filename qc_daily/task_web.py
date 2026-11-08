@@ -267,7 +267,16 @@ def _build_view(d: dict, run_id: str) -> dict:
         groups.append({"key": key, "label": label, "tone": tone,
                        "count": len(items), "items": items})
 
-    alerts = []
+    # 「下一步怎么办」写在 notes 里，旧版不进 view，卡片上看不到（夜测 M6）。
+    # 放在最前面，别被 metrics 里的一堆预警挤掉。
+    note_lines = []
+    for n in (d.get("notes") or [])[:3]:
+        s = str(n).strip()
+        if not s or s.startswith("[pending_review]"):
+            continue
+        note_lines.append(s if s.startswith(("下一步", "原因", "提示", "⚠️", "⛔"))
+                          else f"提示：{s}")
+    alerts = note_lines[:2]
     for a in (d.get("metrics") or {}).get("alerts") or []:
         alerts.append(str(a))
     errs = [str(e) for e in (d.get("errors") or []) if str(e).strip()]

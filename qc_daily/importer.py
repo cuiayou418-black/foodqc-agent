@@ -151,18 +151,43 @@ def guess_header_row(rows: list, scan: int = 8) -> int:
 
 
 def _to_float(v) -> Optional[float]:
+    """把一格读成数字；读不懂就返回 None —— 绝不猜、绝不悄悄改数。
+
+    ⚠️ 实测值写 `>5.0` / `＜0.5` 时真值未知（大于 5.0、小于 0.5），旧版用
+    lstrip 把比较符抹掉读成 5.0，方向为 ≤ 的项目会被判「合格」——这是唯一能把
+    不合格判成合格的路径（2026-11-08 夜测 S1）。现在一律返回 None，由 convert()
+    记「按原文保留，未参与比较」并跳过该行；其余行照跑。
+    """
+    if v is None or v == "":
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)                      # NaN / inf 交给下游 validate_collected
+    s = str(v).strip().replace(",", "").replace("，", "")
+    # 全角数字/小数点归一（１２．３ → 12.3），别把「写了数」误当成「读不懂」
+    s = s.translate(str.maketrans("０１２３４５６７８９．－＋％",
+                                  "0123456789.-+%"))
+    # 比较符 / 约等号：真值未知，不猜（限值列请用 _to_limit_float）
+    if any(ch in s for ch in "<>＜＞≤≥≦≧=～~约"):
+        return None
+    m = re.match(r"^([+-]?\d+(?:\.\d+)?)\s*[^\d.\-]*$", s)   # 允许 13.2% / 0.50 mg/g
+    if not m:
+        return None
+    try:
+        return float(m.group(1))
+    except ValueError:
+        return None
+
+
+def _to_limit_float(v) -> Optional[float]:
+    """限值列允许写 `≤13.5` / `≥77.0` —— 方向符号本就是限值的写法，剥掉再读数。"""
     if v is None or v == "":
         return None
     if isinstance(v, (int, float)):
         return float(v)
-    s = str(v).strip().replace(",", "").replace("，", "")
-    # 去掉单位后缀，如 "0.50 mg/g"、"≤3.0"、"未检出"
-    for ch in ("<", ">", "≤", "≥", "="):
+    s = str(v).strip()
+    for ch in ("≤", "≥", "≦", "≧", "＜", "＞", "<", ">", "="):
         s = s.lstrip(ch)
-    try:
-        return float(s)
-    except ValueError:
-        return None
+    return _to_float(s)
 
 
 def _to_text(v) -> str:
@@ -378,7 +403,7 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
         if not batch_h:
             notes.append("⛔ 宽表缺少批次列，无法导入")
             return [], notes
-        for rec in records:
+        for line_no, rec in enumerate(records, start=1):
             batch_id = _to_text(rec.get(batch_h))
             if not batch_id:
                 continue
@@ -386,9 +411,15 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
             tested_at = normalize_datetime(rec.get(date_h)) if date_h else ""
             inspector = _to_text(rec.get(insp_h)) if insp_h else ""
             for col, item in item_cols.items():
-                val = _to_float(rec.get(col))
+                raw = rec.get(col)
+                val = _to_float(raw)
                 if val is None:
-                    continue  # 空格子跳过（未测该项目）
+                    # 空格子 = 未测该项目，静默跳过；写了却读不懂 = 真值未知，绝不改数
+                    if raw is not None and str(raw).strip():
+                        notes.append(
+                            f"⚠️ 数据第 {line_no} 行 · {batch_id}×{item} 实测值「{_to_text(raw)}」"
+                            "按原文保留，未参与比较（含比较符或不是数字时真值未知）")
+                    continue
                 spec = item_spec(config, product, item)
                 rows.append({
                     "batch_id": batch_id, "product": product, "item": item, "value": val,
@@ -400,15 +431,17 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
         return rows, notes
 
     # ---- 常规长表 ----
-    for rec in records:
+    for line_no, rec in enumerate(records, start=1):
         row = {col: None for col in TABLE_COLUMNS[ttype]}
         for header, field in mapping.items():
             if field in row:
                 row[field] = rec.get(header)
-        # 数值/日期/文本归一
+        raw_value = row.get("value") if ttype == "quality" else None
+        # 数值/日期/文本归一（限值列允许带 ≤/≥，实测值列不允许）
         for f in ("planned_qty", "actual_qty", "value", "limit_value", "qty", "temp", "humidity"):
             if f in row:
-                row[f] = _to_float(row[f])
+                row[f] = (_to_limit_float(row[f]) if f == "limit_value"
+                          else _to_float(row[f]))
         for f in ("started_at", "finished_at", "tested_at", "occurred_at"):
             if f in row:
                 row[f] = normalize_datetime(row[f])
@@ -416,6 +449,16 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
                   "limit_source", "inspector", "lab", "warehouse", "event"):
             if f in row:
                 row[f] = _to_text(row[f])
+
+        # 实测值读不懂（>5.0 / ＜0.5 / 十三点二 / 未检出）：真值未知。
+        # 绝不写 NULL 进库（会崩在 models.compare），该行不判、其余照跑（夜测 S1/S6）。
+        if ttype == "quality" and row.get("value") is None:
+            if raw_value is not None and str(raw_value).strip():
+                notes.append(
+                    f"⚠️ 数据第 {line_no} 行 · {_to_text(row.get('batch_id'))}×"
+                    f"{_to_text(row.get('item'))} 实测值「{_to_text(raw_value)}」"
+                    "按原文保留，未参与比较（含比较符或不是数字时真值未知）")
+            continue
 
         if ttype == "quality":
             # 缺限值/单位/方向 → 按配置补齐（限值只来自配置，不猜）

@@ -1024,6 +1024,22 @@ def _brief(result: dict) -> dict:
     ind = m.group(1).strip() if m else "有一项指标"
     batch = result.get("batch_id") or "这个批次"
 
+    tools = [str(t) for t in (result.get("tools_called") or [])]
+    if "judge_batch" not in tools:
+        # 一个工具拒绝就整链中止：判定根本没跑，旧版却说「逐项判定跑完了」（夜测 S4）。
+        # 对要签字的人来说，「没查」和「查过没问题」是两件完全不同的事。
+        where = "只跑到查限值就停了" if "lookup_limit" in tools else "没进入逐项判定"
+        return {
+            "paras": [
+                f"这次判定没跑成 —— {where}，原因：没识别出你要问的批次和指标。",
+                "下面没有逐项判定结论，也不给「能收 / 不能收」。这不是「查过没问题」，是根本没查。",
+                "下一步：带上 DEMO 批次号和具体指标再问一次，"
+                "例如「DEMO-001 这批稻谷出糙率 76.5 能收吗」。",
+            ],
+            "counts": {"confirmed": len(ok), "review": len(rv),
+                       "uncovered": len(ms), "passed": 0},
+        }
+
     paras: list[str] = []
     if passed:
         paras.append(f"{batch} 我逐项比过了，{passed} 项数值按代码判定落在限值内。")

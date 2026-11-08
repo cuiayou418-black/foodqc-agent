@@ -260,6 +260,9 @@ def reports_list(rows: list) -> str:
         status_tag = {"success": "<span class='tag ok'>成功</span>",
                       "partial": "<span class='tag warn'>部分完成</span>",
                       "failed": "<span class='tag fail'>失败</span>"}.get(r["status"], r["status"])
+        if r.get("note"):
+            status_tag += (f"<div style='font-size:11px;color:#8a5a06;margin-top:3px'>"
+                           f"{r['note']}</div>")
         pass_cell = f"{r['pass_rate']:.2%}" if r["pass_rate"] is not None else "-"
         files = r["files"]
         acts = []
@@ -316,10 +319,11 @@ def report_viewer(date: str) -> str:
 
 def generate_page(default_date: str, scheduler_on: bool, db_ready: bool) -> str:
     """一键生成页（只使用真实导入数据，不提供模拟数据选项）。"""
-    sched_note = ("<p style='color:#0e7a3d;font-size:13px'>✅ 后台调度器正在运行，每天自动生成昨日日报，"
+    # 命令行参数是给开发者的话，别摊到化验室使用人面前（夜测 L8）
+    sched_note = ("<p style='color:#0e7a3d;font-size:13px'>✅ 自动日报已开启，每天会自动生成昨日日报，"
                   "本页用于手动补生成。</p>" if scheduler_on else
-                  "<p style='color:#c2771a;font-size:13px'>⚠️ 后台调度器未启动（用 "
-                  "<code>python -m qc_daily web --scheduler</code> 启动可自动每日生成）。</p>")
+                  "<p style='color:#c2771a;font-size:13px'>⚠️ 自动日报未开启，"
+                  "需要每天手动点一次「开始生成」。</p>")
     if db_ready:
         source_options = "<option value='sql' selected>SQL 数据库（已导入的数据）</option>"
         run_btn = "<button class='btn' onclick='startRun()'>开始生成</button>"
