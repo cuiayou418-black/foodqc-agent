@@ -449,6 +449,41 @@ def item_spec(config: QCDailyConfig, product: str, item: str) -> dict:
     return {}
 
 
+# ---------------------------------------------------------------- 判定方向
+# 「指标方向」决定 compare() 怎么比，写反了整批判反，而且两个方向的后果不一样：
+#   下限型（≥，如出糙率/整精米率）：判反＝把好粮当坏粮 → 赔钱
+#   上限型（≤，如水分/杂质/黄粒米/谷外糙米）：判反＝把超标粮放行 → 害人
+# 表里那一列是化验室手填的，一张表所有项目共用一列、模板统一填「≥」的情况真实存在
+# （2026-11-09 演示表就是这么写的：黄粒米 0.0%、谷外糙米 0.4% 全被判不合格）。
+# 所以口径定为：**标准配置里有方向就以配置为准**；表里写反了按标准判，但必须留痕告知。
+_DIR_ALIASES = {
+    "≤": "≤", "<=": "≤", "不大于": "≤", "不超过": "≤", "上限": "≤", "以下": "≤",
+    "≥": "≥", ">=": "≥", "不小于": "≥", "不低于": "≥", "下限": "≥", "以上": "≥",
+}
+
+
+def _norm_direction(v) -> str:
+    s = re.sub(r"[\s\u00a0\u3000]+", "", str(v or ""))
+    return _DIR_ALIASES.get(s, "")
+
+
+def resolve_direction(sheet_dir, spec_dir, item: str, noted: set, notes: list) -> str:
+    """定判定方向：标准配置 > 表内「指标方向」列。
+
+    表内与标准冲突时以标准为准，并按项目（不是按行）提示一次，避免刷屏。
+    """
+    s = _norm_direction(sheet_dir)
+    a = _norm_direction(spec_dir)
+    if a and s and s != a:
+        if item not in noted:
+            noted.add(item)
+            notes.append(
+                f"⚠️ 判定方向冲突：「{item}」表里「指标方向」写 {s}，按标准应为 {a}，已按 {a} 判定。"
+                f"请让化验室核对该列——同一份数据若按表里的方向算，结论正好相反。")
+        return a
+    return a or s
+
+
 def _skip_note(line_no: int, batch_id, item, raw) -> str:
     """一行被跳过时的提示。必须分清「公式没存结果」与「写了但读不懂」——
     两种原因不同、补救动作也不同（前者去 Excel 重算保存，后者改写法）。"""
@@ -496,6 +531,7 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
         notes.append("下一步：把检测项目写进表头（如「水分含量」「出糙率」），或改成一行一项的长表")
     if is_wide_quality:
         notes.append(f"识别为宽表质检格式，已自动翻转 {len(item_cols)} 个检测项目列")
+        dir_noted: set = set()   # 方向冲突提示按项目去重，别每行刷一遍
         batch_h = next((h for h, f in mapping.items() if f == "batch_id"), None)
         prod_h = next((h for h, f in mapping.items() if f == "product"), None)
         # 化验室表里日期那一列常就写「日期」，它会被映射成 occurred_at；
@@ -541,8 +577,9 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
                 rows.append({
                     "batch_id": batch_id, "product": product, "item": item, "value": val,
                     "unit": spec.get("unit", ""),
-                    "direction": (_to_text(rec.get(dir_h)) if dir_h else "")
-                                 or spec.get("direction", "≤"),
+                    "direction": resolve_direction(
+                        (_to_text(rec.get(dir_h)) if dir_h else ""),
+                        spec.get("direction", ""), item, dir_noted, notes),
                     "limit_value": row_limit if row_limit is not None else spec.get("limit"),
                     "standard": (_to_text(rec.get(std_h)) if std_h else "")
                                 or spec.get("standard", ""),
@@ -553,6 +590,7 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
         return rows, notes
 
     # ---- 常规长表 ----
+    dir_noted: set = set()
     for line_no, rec in enumerate(records, start=1):
         row = {col: None for col in TABLE_COLUMNS[ttype]}
         for header, field in mapping.items():
@@ -592,8 +630,10 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
                 row["limit_value"] = spec.get("limit")
             if not row.get("unit"):
                 row["unit"] = spec.get("unit", "")
-            if not row.get("direction"):
-                row["direction"] = spec.get("direction", "≤")
+            # 方向不能只「空则补」：表里写了但写反，同样得按标准纠正（2026-11-09 事故）
+            row["direction"] = resolve_direction(
+                row.get("direction"), spec.get("direction", ""),
+                row.get("item", ""), dir_noted, notes)
             if not row.get("standard"):
                 row["standard"] = spec.get("standard", "")
             if not row.get("limit_source"):
