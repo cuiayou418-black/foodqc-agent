@@ -301,18 +301,36 @@ function verifyDate(d) {{
     return page("日报列表", "reports", body)
 
 
-def report_viewer(date: str) -> str:
-    """日报查看页：iframe 嵌入 HTML 报告 + 下载按钮。"""
+def report_viewer(date: str, view: str = "audit", has_brief: bool = True) -> str:
+    """日报查看页：iframe 嵌入 HTML 报告 + 下载按钮。
+
+    同一份数据两份产物，页面上必须分得清：
+        审核版 = 逐项实测值/限值/标准页码，班长拿它核完签字；
+        经理版 = 一屏定论，直接发邮件给经理看。
+    """
+    brief = (view == "brief")
+    audit_cls = "btn small ghost" if brief else "btn small"
+    brief_cls = "btn small" if brief else "btn small ghost"
+    src = (f'/reports/{date}/file?fmt=brief_html' if brief else f'/reports/{date}/file')
+    title = f"经理版日报 · {date}（发邮件用）" if brief else f"品控日报 · {date}（班长审核用）"
+    tabs = (f"<a class='{audit_cls}' href='/reports/{date}'>审核版</a>"
+            + (f"<a class='{brief_cls}' href='/reports/{date}?v=brief'>经理版（邮件）</a>"
+               if has_brief else
+               "<span class='btn small ghost' style='opacity:.45;cursor:not-allowed' "
+               "title='本次未生成经理版'>经理版（未生成）</span>"))
+    brief_dl = (f"<a class='btn small ghost' href='/reports/{date}/download/brief_html'>下载经理版</a>"
+                if has_brief else "")
     body = f"""
-<div class='page-title'>品控日报 · {date}</div>
+<div class='page-title'>{title}</div>
 <div class='viewer'>
   <div class='bar'>
     <a class='btn small ghost' href='/reports'>← 返回列表</a>
+    {tabs}
     <a class='btn small' href='/reports/{date}/download/pdf'>下载 PDF</a>
     <a class='btn small' href='/reports/{date}/download/excel'>下载 Excel</a>
     <a class='btn small ghost' href='/reports/{date}/file' target='_blank'>新窗口打开原报告</a>
   </div>
-  <iframe src='/reports/{date}/file' title='品控日报 {date}'></iframe>
+  <iframe src='{src}' title='{"经理版日报" if brief else "品控日报"} {date}'></iframe>
 </div>"""
     return page(f"日报 {date}", "reports", body)
 
@@ -386,8 +404,10 @@ def audit_page(entries: list) -> str:
                       "partial": "<span class='tag warn'>部分完成</span>",
                       "failed": "<span class='tag fail'>失败</span>"}.get(e.get("status"), e.get("status"))
         outputs = e.get("outputs", {})
-        links = " ".join(f"<a href='/reports/{e['report_date']}/download/{fmt}'>{fmt}</a>"
-                         for fmt in outputs if fmt != "html")
+        # 经理版单独给个能认的名字，别在审计日志里显示成 brief_html
+        _label = {"pdf": "pdf", "excel": "excel", "brief_html": "经理版"}
+        links = " ".join(f"<a href='/reports/{e['report_date']}/download/{fmt}'>{_label[fmt]}</a>"
+                         for fmt in outputs if fmt in _label)
         errs = "; ".join(e.get("errors", [])[:2])
         trs.append(
             f"<tr><td class='mono'>{e.get('run_id', '')}</td><td><b>{e.get('report_date', '')}</b></td>"

@@ -21,6 +21,7 @@ from .audit import AuditLogger, new_run_id, save_raw_snapshot
 from .collectors import build_data_source, validate_collected
 from .config import QCDailyConfig
 from .console import say
+from .brief import write_brief
 from .exporters import export_excel, export_pdf
 from .models import Alert, DailyMetrics, RunResult, fingerprint, iso_now
 from .templates import render_html
@@ -55,7 +56,14 @@ class QCDailyAgent:
     # ---------------------------------------------------------------- 主流程
 
     def run(self, report_date: date | None = None, push: bool | None = None,
-            formats: list | None = None) -> RunResult:
+            formats: list | None = None, reviewed_by: str = "") -> RunResult:
+        # 审核状态：经理版只在班长核对过之后才出正式件。
+        # 没传审核人就恒为草稿——宁可少一份正式件，也不能让未审的数字顶着正式件发出去。
+        review_state = {
+            "status": "approved" if reviewed_by else "pending",
+            "by": (reviewed_by or "").strip(),
+            "at": iso_now() if reviewed_by else "",
+        }
         run_id = new_run_id()
         started = iso_now()
         target = self.resolve_report_date(report_date)
@@ -167,6 +175,22 @@ class QCDailyAgent:
                     _STEP("报告", f"HTML 已生成: {html_path}（指纹 {report_fingerprint[:16]}）")
 
                 full_meta = {**base_meta, "fingerprint": report_fingerprint}
+
+                # ---- 6.5 经理版（一屏定论）：与审核版并列产出，各给各的人 ----
+                # 审核版＝逐条实测值/限值/标准页码，班长拿它核完签字；
+                # 经理版＝今天收几批、哪几批有问题、参考怎么处置，手机一屏看完。
+                # 经理版不带放行结论，未审核时整版标草稿（报错也不影响审核版已产出）。
+                try:
+                    brief_paths = write_brief(
+                        metrics, {**full_meta, "review": review_state}, report_dir)
+                    outputs["brief_html"] = brief_paths["html"]
+                    outputs["brief_text"] = brief_paths["text"]
+                    outputs["brief_eml"] = brief_paths["eml"]
+                    _STEP("报告", f"经理版已生成: {brief_paths['html']}"
+                                  f"（{'已审核·' + review_state['by'] if reviewed_by else '草稿·待审核'}）")
+                except Exception as e:
+                    errors.append(f"经理版生成失败: {e}")
+                    _STEP("报告", f"⛔ 经理版生成失败: {e}")
                 if "pdf" in formats:
                     try:
                         pdf_path = os.path.join(report_dir, f"品控日报_{target.isoformat()}.pdf")

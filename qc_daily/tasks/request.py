@@ -31,6 +31,9 @@ class TaskRequest:
     formats: list[str] = field(default_factory=lambda: ["html", "pdf", "excel"])
     output_root: str = "runs"
     push: bool = False
+    # 班长审核人姓名。空 = 未审核，经理版只会出「草稿·待审核」。
+    # 审计上很重要：它记录了「谁看过这份数据并同意对外」。
+    reviewed_by: str = ""
 
     def __post_init__(self) -> None:
         if not self.report_date:

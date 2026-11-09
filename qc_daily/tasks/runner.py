@@ -367,7 +367,8 @@ class TaskRunner:
         agent.import_notes = list(ctx.get("notes") or [])
         self._state(res, "analyzing", "调 QCDailyAgent.run（八步流水线原样）")
         result = agent.run(report_date=date.fromisoformat(req.report_date),
-                           push=False, formats=req.formats)
+                           push=False, formats=req.formats,
+                           reviewed_by=getattr(req, "reviewed_by", ""))
 
         # 归集 agent 原生产物到 run 目录（收敛点 2：一切落在同一 run 根下）
         outdir = run_dir / "outputs"

@@ -22,12 +22,13 @@ def _utf8_stdout() -> None:
 
 def execute(task_id: str, inputs: list[str], report_date: str = "",
             formats: list[str] | None = None, output_root: str = "runs",
-            config_path: str | None = None) -> int:
+            config_path: str | None = None, reviewed_by: str = "") -> int:
     _utf8_stdout()
     cfg = QCDailyConfig.load(config_path) if config_path else QCDailyConfig.load()
     fmts = list(formats or cfg.export.get("formats", ["html", "pdf", "excel"]))
     req = TaskRequest(task_id=task_id, inputs=list(inputs), report_date=report_date,
-                      formats=fmts, output_root=output_root, push=False)
+                      formats=fmts, output_root=output_root, push=False,
+                      reviewed_by=reviewed_by)
     res = TaskRunner(config=cfg).run(req)
 
     print("=" * 68)
@@ -63,9 +64,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--formats", nargs="+", help="导出格式，空格分隔，如 html excel")
     p.add_argument("--out", default="runs", help="run 根目录（默认项目根 runs/）")
     p.add_argument("--config", help="配置文件路径")
+    p.add_argument("--reviewed-by", default="",
+                   help="班长审核人姓名。填了才出经理版正式件；不填则经理版恒为「草稿·待审核」")
     a = p.parse_args(argv)
     return execute(task_id=a.task, inputs=a.input, report_date=a.date or "",
-                   formats=a.formats, output_root=a.out, config_path=a.config)
+                   formats=a.formats, output_root=a.out, config_path=a.config,
+                   reviewed_by=a.reviewed_by)
 
 
 if __name__ == "__main__":

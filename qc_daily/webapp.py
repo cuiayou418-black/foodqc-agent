@@ -75,11 +75,23 @@ def _report_dir(cfg: QCDailyConfig, day: str) -> str:
 
 
 def _report_files(cfg: QCDailyConfig, day: str) -> dict:
-    """该日期已生成的导出文件 {fmt: 路径}。"""
+    """该日期已生成的导出文件 {fmt: 路径}。
+
+    html/pdf/excel = 班长审核版（逐项核对用）；
+    brief_* = 经理版（一屏定论，直接发邮件）。两份分开出，不互相顶替。
+    """
     d = _report_dir(cfg, day)
+    cand = {
+        "html": f"品控日报_{day}.html",
+        "pdf": f"品控日报_{day}.pdf",
+        "excel": f"品控日报_{day}.xlsx",
+        "brief_html": f"经理日报_{day}.html",
+        "brief_text": f"经理日报_{day}.txt",
+        "brief_eml": f"经理日报_{day}.eml",
+    }
     out = {}
-    for fmt, ext in (("html", "html"), ("pdf", "pdf"), ("excel", "xlsx")):
-        p = os.path.join(d, f"品控日报_{day}.{ext}")
+    for fmt, name in cand.items():
+        p = os.path.join(d, name)
         if os.path.exists(p):
             out[fmt] = p
     return out
@@ -339,14 +351,17 @@ def create_app(config: QCDailyConfig, with_scheduler: bool = False) -> Flask:
         files = _report_files(config, day)
         if "html" not in files:
             abort(404, f"未找到 {day} 的日报（尚未生成或已清理）")
-        return tpl.report_viewer(day)
+        return tpl.report_viewer(day, view=request.args.get("v", "audit"),
+                                 has_brief=("brief_html" in files))
 
     @app.route("/reports/<day>/file")
     def report_file(day: str):
         files = _report_files(config, day)
-        if "html" not in files:
+        # fmt=brief_html 时直接给经理版；默认仍给审核版，避免旧链接指向变了
+        path = files.get(request.args.get("fmt", "html")) or files.get("html")
+        if not path:
             abort(404)
-        return send_file(files["html"])
+        return send_file(path)
 
     @app.route("/reports/<day>/download/<fmt>")
     def report_download(day: str, fmt: str):
@@ -354,7 +369,8 @@ def create_app(config: QCDailyConfig, with_scheduler: bool = False) -> Flask:
         path = files.get(fmt)
         if not path:
             abort(404, f"{day} 无 {fmt} 格式文件")
-        name = f"品控日报_{day}.{os.path.splitext(path)[1].lstrip('.')}"
+        base = "经理日报" if fmt.startswith("brief") else "品控日报"
+        name = f"{base}_{day}.{os.path.splitext(path)[1].lstrip('.')}"
         return send_file(path, as_attachment=True, download_name=name)
 
     @app.route("/generate")
