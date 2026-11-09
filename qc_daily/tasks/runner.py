@@ -26,6 +26,28 @@ from .registry import TASKS, get_spec
 from .report import BLOCKS, write_report
 from .request import RequestError, TaskRequest
 
+
+def diagnose_missing_dates(dates: list, no_rows: bool) -> tuple[str, str, str]:
+    """「一条检验日期都没读出来」时该怎么说话。
+
+    返回 (给人看的错因, 下一步, trace code)。
+
+    以前这里直接走"日期不匹配"分支，把四种完全不同的输入错误（空表 / 只有表头 /
+    日期列是公式没存结果 / 实测值整列读不懂）说成同一句话，还叫人去改根本没坏的
+    日期列——照着改会把真实记录改坏（夜测 2026-11-09 S3 / G4）。
+    """
+    if no_rows:
+        return ("这张表一行可判定的记录都没读出来（可能是空表、只有表头，"
+                "或者「实测值」整列都读不懂）。没有可判定的记录，本次没跑。",
+                "下一步：确认表里有数据行；实测值要写数字——「未检出」「—」「＜0.5」"
+                "这类现在会整行跳过，原值会列在下方提醒里。",
+                "no_rows")
+    return ("表里读到了数据行，但一条检验日期都没读出来"
+            "（日期列可能是公式没存计算结果，或格式认不出）。",
+            "下一步：在 Excel 里重算并保存后再传，或把日期列改成 yyyy-mm-dd 文本；"
+            "不要改动业务日期本身。",
+            "no_dates")
+
 ROOT = Path(__file__).resolve().parent.parent.parent
 STATES = ("queued", "collecting", "validating", "analyzing", "rendering")
 TERMINAL = ("done", "partial", "failed", "pending_review")
@@ -212,6 +234,17 @@ class TaskRunner:
             res.notes.append("下一步：按上一条补齐后重跑；没有批次号列的表，改成一"
                             "行一项的长表（批次号 / 检测项目 / 实测值 / 限值）也能跑。")
             self._trace(res, "failed", "import_blocked", str(blocked)[:300])
+            return ctx
+        # 日期列表为空 ≠ 日期不匹配。空表、只有表头、日期列是公式没存结果、整表实测值
+        # 都读不懂——这四种都报成"日期不匹配"，会把人指去改根本没坏的日期列
+        # （夜测 2026-11-09 S3 / G4：改日期照提示做，反而把真实记录改坏）。
+        if not summary["dates"]:
+            res.status = "failed"
+            msg, nxt, code = diagnose_missing_dates(summary["dates"], no_rows)
+            res.errors.append(msg)
+            res.notes.append(nxt)
+            self._trace(res, "failed", code,
+                        str(ctx["notes"] if code == "no_rows" else ctx["import_dates"])[:400])
             return ctx
         if req.report_date not in summary["dates"]:
             res.status = "failed"

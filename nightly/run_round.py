@@ -35,6 +35,8 @@ UPLOAD_DIR = REPO / "qc_daily_data" / "task_uploads"
 OUT_DIR = Path(__file__).resolve().parent / "rounds"
 STATE = Path(__file__).resolve().parent / "state.json"
 NIGHTLY_STATE = Path(__file__).resolve().parent / "state-nightly.json"
+NIGHTLY_LOCK = Path(__file__).resolve().parent / ".nightly.lock"
+LOCK_STALE_MIN = 20   # 20 分钟内已有轮次启动过 → 视为重复触发，直接跳过
 ROUNDS = 6          # 00:00–05:00，每小时一轮共 6 轮
 PER_ROUND = 9       # 每轮 9 个场景，覆盖问答/表格/畸形/拒绝/页面
 # 每晚巡检：按日期轮换轮次（6 天覆盖全部 53 个场景后循环），日志按日期归档。
@@ -550,31 +552,68 @@ def run_round(n: int, nightly_tag: str = "") -> int:
     return 0
 
 
-def run_nightly() -> int:
-    """每晚一次：按日期轮换轮次，日志按天归档，同一天重跑不覆盖、不重复计数。
+def _nightly_locked() -> bool:
+    """同一次触发被连点两次时只跑一轮。
 
-    6 轮跑满后自动从第 1 轮重新循环，这样 53 个场景能一直轮着测，
-    且不会像原一次性巡检那样 next_round=7 之后直接结束。
+    2026-11-08 夜：21:16:57 与 21:17:14 相隔 17 秒跑了两轮，一个晚上的
+    6 轮预算瞬间少了 2 轮，汇总因此落在 03:46 而不是 05:xx。
+    这里只看「上一轮什么时候启动的」，不依赖进程存活判断（Windows 上不可靠）。
     """
-    today = date.today().isoformat()
-    prev: dict = {}
-    if NIGHTLY_STATE.exists():
+    if NIGHTLY_LOCK.exists():
         try:
-            prev = json.loads(NIGHTLY_STATE.read_text(encoding="utf-8"))
+            started = float(json.loads(NIGHTLY_LOCK.read_text(encoding="utf-8")).get("ts", 0))
         except Exception:
-            prev = {}
-    same_day = prev.get("last_date") == today
-    n = int(prev.get("next_round", 1))
-    if n < 1 or n > ROUNDS:
-        n = 1
-    if same_day:
-        # 同一天再触发（例如重试）接着跑下一轮，但不覆盖已有日志
-        tag = f"{today}-b"
-    else:
-        tag = today
-    print(f"=== 每晚巡检 {today} · 第 {n}/{ROUNDS} 轮"
-          f"{'（当日第 2 次触发，日志加 -b）' if same_day else ''} ===")
-    return run_round(n, nightly_tag=tag)
+            started = 0.0
+        gap = time.time() - started
+        if 0 <= gap < LOCK_STALE_MIN * 60:
+            print(f"LOCKED: 上一轮 {gap:.0f} 秒前刚开始（<{LOCK_STALE_MIN} 分钟），本次跳过")
+            print("ROUND=SKIP OF=%d NEXT=NONE MODE=NIGHTLY" % ROUNDS)
+            return True
+    NIGHTLY_LOCK.write_text(json.dumps({"ts": time.time(), "pid": os.getpid()}),
+                            encoding="utf-8")
+    return False
+
+
+def plan_nightly(prev: dict, today: str) -> tuple[int, str, bool]:
+    """决定今晚跑第几轮：跨日归 1，同日递进。返回 (轮次, 日志标签, 是否同日)。
+
+    2026-11-08 夜：跨日接着数（第 5、6 轮在前一晚用掉了），19:16 起只判读了 4 轮
+    就收尾。每天 0 点归 1 才能保证一晚 6 轮都有人判读。
+    """
+    if prev.get("last_date") == today:
+        n = int(prev.get("next_round", 1))
+        return n, f"{today}-b", True
+    return 1, today, False
+
+
+def run_nightly() -> int:
+    """每晚一次：按日期归 1、轮次递进，日志按天归档，同一天重跑不覆盖。
+
+    **每天 0 点从第 1 轮开始**；6 轮跑满即停，不再自动循环。
+    """
+    if _nightly_locked():
+        return 0
+    try:
+        today = date.today().isoformat()
+        prev: dict = {}
+        if NIGHTLY_STATE.exists():
+            try:
+                prev = json.loads(NIGHTLY_STATE.read_text(encoding="utf-8"))
+            except Exception:
+                prev = {}
+        n, tag, same_day = plan_nightly(prev, today)
+        if n < 1 or n > ROUNDS:
+            print(f"今晚 {ROUNDS} 轮已跑完（第 {n} 轮），不再重复。")
+            print(f"ROUND=DONE OF={ROUNDS} NEXT=NONE DATE={today} MODE=NIGHTLY")
+            return 0
+        print(f"=== 每晚巡检 {today} · 第 {n}/{ROUNDS} 轮"
+              f"{'（当日第 2 次触发，日志加 -b）' if same_day else ''} ===")
+        return run_round(n, nightly_tag=tag)
+    finally:
+        try:
+            NIGHTLY_LOCK.unlink()
+        except OSError:
+            pass
 
 
 def run_next() -> int:

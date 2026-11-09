@@ -52,6 +52,24 @@ class TestPeekTableDate(unittest.TestCase):
             self.assertEqual(rows, 3)
             self.assertEqual(got, "2026-11-09")
 
+    def test_csv_with_title_rows_above_header(self):
+        """CSV 上面压着标题行/说明行时，也要和 xlsx 一样用同一套表头探测。
+
+        夜测 2026-11-09 G1：xlsx 分支修了，CSV 分支还用 DictReader 硬吃首行。
+        """
+        with TemporaryDirectory() as d:
+            p = Path(d) / "lab.csv"
+            p.write_text(
+                "某某米业有限公司\n"
+                "检验日期：2026-11-10\n"
+                "日期,品种,样品来源,出库水分,出糙率\n"
+                "2026-11-10,某品种,某地某仓库,13.2,76.5\n"
+                "2026-11-10,某品种,某地某仓库,13.4,75.8\n",
+                encoding="utf-8-sig")
+            rows, got = _peek_table(p)
+            self.assertEqual(rows, 2, "数据行只算表头之后的两行")
+            self.assertEqual(got, "2026-11-10", "不能回退今天")
+
     def test_real_demo_tables(self):
         repo = Path(__file__).resolve().parent.parent / "demo"
         for name in ("送检水稻检测_DEMO_可跑版.xlsx",

@@ -74,7 +74,9 @@ class TestConvertSkipsUnknownValues(unittest.TestCase):
         self.assertEqual(rows[0]["item"], "杂质含量")
         self.assertEqual(rows[0]["value"], 0.8)
         self.assertEqual(rows[0]["limit_value"], 1.0)
-        self.assertTrue(any("按原文保留" in n and ">5.0" in n for n in notes), notes)
+        # 口径修正（2026-11-09 G5）：这行根本没进库，不能说「按原文保留」，
+        # 要说「没进判定、原值只在这条提醒里」，否则读的人以为数据还在库里。
+        self.assertTrue(any(">5.0" in n and "没进判定" in n for n in notes), notes)
 
     def test_fullwidth_and_chinese_number_do_not_crash_the_table(self):
         rec = {"批次号": "DEMO-Q01", "检测项目": "水分含量", "实测值": "＜0.5",

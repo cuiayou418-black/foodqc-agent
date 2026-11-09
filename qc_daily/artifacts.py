@@ -75,5 +75,7 @@ def index_runs(output_root: str = "runs", limit: int = 30) -> list[dict]:
             continue
         out.append({"run_id": s.get("run_id", d.name), "task_id": s.get("task_id", ""),
                     "status": s.get("status", ""), "report_date": s.get("report_date", ""),
-                    "started_at": s.get("started_at", "")})
+                    "started_at": s.get("started_at", ""),
+                    # 历史列表要能说「错在哪」，否则同名的六条"出错了"完全看不出差别
+                    "errors": [str(e) for e in (s.get("errors") or []) if str(e).strip()]})
     return out

@@ -330,12 +330,28 @@ def _history_rows(limit: int = 10) -> list[dict]:
             except ValueError:
                 pass
         cn, tone = _STATUS_CN.get(r.get("status", ""), (r.get("status") or "", "mute"))
+        errs = [e for e in (r.get("errors") or []) if str(e).strip()]
+        reason = str(errs[0]).strip() if errs else ""
+        if len(reason) > 22:                      # 右栏窄，只留一句能看懂的
+            reason = reason[:22] + "…"
         out.append({"run_id": r.get("run_id", ""), "name": name, "when": when,
-                    "status_cn": cn, "tone": tone,
+                    "status_cn": cn, "tone": tone, "reason": reason, "count": 1,
                     "report_date": r.get("report_date", "")})
         if len(out) >= limit:
             break
-    return out
+    # 同一分钟、同名、同状态、同错因的连点记录折叠成「×N」，
+    # 否则演示时右栏挂六条一模一样的「出错了」很扎眼（夜测 2026-11-09 G7）
+    merged: list[dict] = []
+    for h in out:
+        key = (h["name"], h["when"], h["status_cn"], h["reason"])
+        if merged and merged[-1].get("_key") == key:
+            merged[-1]["count"] += 1
+            continue
+        h["_key"] = key
+        merged.append(h)
+    for h in merged:
+        h.pop("_key", None)
+    return merged
 
 
 # ------------------------------------------------------------------ 页面
@@ -563,12 +579,18 @@ def tasks_view():
     cards = "".join(card(t) for t in primary)
     more_html = "".join(card(t, True) for t in more) or "<div class='tk-muted'>无</div>"
     hist = _history_rows()
-    hist_html = "".join(
-        f"<div class='tk-hist' data-run='{h['run_id']}'>"
-        f"<span class='w'><i>{h['when']}</i>{h['name']}</span>"
-        f"<em style='color:{'#0f6e56' if h['tone']=='ok' else ('#8a5a06' if h['tone']=='warn' else '#8f959e')}'>"
-        f"{h['status_cn']}</em></div>"
-        for h in hist) or "<div class='tk-muted'>还没做过任务</div>"
+
+    def _hist_item(h: dict) -> str:
+        cnt = f" ×{h['count']}" if h.get("count", 1) > 1 else ""
+        rsn = h.get("reason") or ""
+        rsn = rsn.replace("<", "&lt;").replace(">", "&gt;")
+        sub = f"<br><span style='color:#8f959e;font-size:12px'>{rsn}</span>" if rsn else ""
+        color = "#0f6e56" if h["tone"] == "ok" else ("#8a5a06" if h["tone"] == "warn" else "#8f959e")
+        return (f"<div class='tk-hist' data-run='{h['run_id']}'>"
+                f"<span class='w'><i>{h['when']}</i>{h['name']}{cnt}{sub}</span>"
+                f"<em style='color:{color}'>{h['status_cn']}</em></div>")
+
+    hist_html = "".join(_hist_item(h) for h in hist) or "<div class='tk-muted'>还没做过任务</div>"
 
     first = primary[0] if primary else {"name": "选一个任务", "description": ""}
     body = f"""
@@ -637,18 +659,27 @@ def _peek_table(p: Path) -> tuple[int, str]:
     """
     rows, dates = 0, {}
     try:
+        from .importer import guess_header_row
         if p.suffix.lower() == ".csv":
             import csv
             with p.open("r", encoding="utf-8-sig", errors="replace", newline="") as f:
-                rd = csv.DictReader(f)
-                for r in rd:
-                    rows += 1
-                    for k, v in r.items():
-                        if k and "日期" in str(k) and v:
-                            dates[str(v).strip()[:10]] = dates.get(str(v).strip()[:10], 0) + 1
+                all_rows = [list(r) for r in csv.reader(f)]
+            # CSV 上面同样可能压着标题行 / 「检验日期：2026-11-10」这种说明行。
+            # 旧版用 DictReader 硬吃首行 → 一列日期都找不到 → 回退今天 → 整单拒跑
+            # （夜测 2026-11-09 G1：xlsx 分支修了，CSV 分支漏改）。
+            hi = guess_header_row(all_rows) if all_rows else 0
+            head = all_rows[hi] if hi < len(all_rows) else []
+            idx = [i for i, h in enumerate(head) if h and "日期" in str(h)]
+            for row in all_rows[hi + 1:]:
+                if not any(str(c).strip() for c in row):
+                    continue
+                rows += 1
+                for i in idx:
+                    if i < len(row) and str(row[i]).strip():
+                        d = str(row[i]).strip()[:10]
+                        dates[d] = dates.get(d, 0) + 1
         else:
             import openpyxl
-            from .importer import guess_header_row
             wb = openpyxl.load_workbook(p, read_only=True, data_only=True)
             ws = wb[wb.sheetnames[0]]
             all_rows = [list(r) for r in ws.iter_rows(values_only=True)]

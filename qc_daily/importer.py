@@ -223,26 +223,67 @@ def normalize_datetime(v) -> str:
 
 # ------------------------------------------------------------------ 文件读取
 
+#: 公式格未保存计算结果时的占位前缀。
+#: Excel 用 data_only=True 读这类格得到 None，旧版当成"空格子"静默跳过 ——
+#: 于是一整行数据凭空消失、报告少列一项不合格还不吭声（夜测 2026-11-09 S2）。
+#: 用 U+2063 做前缀，正常文本里不会出现，也不影响数字解析。
+FORMULA_NO_CACHE = "\u2063公式无结果:"
+
+
+def _is_formula_cell(v) -> bool:
+    return isinstance(v, str) and v.lstrip().startswith("=") and len(v.strip()) > 1
+
+
+def _is_formula_marker(v) -> bool:
+    return isinstance(v, str) and v.startswith(FORMULA_NO_CACHE)
+
+
+def _formula_expr(v) -> str:
+    return str(v)[len(FORMULA_NO_CACHE):].strip() if _is_formula_marker(v) else ""
+
+
 def _read_xlsx(path: str) -> list[tuple[str, list[dict]]]:
-    """返回 [(sheet名, [行dict, ...]), ...]。"""
+    """返回 [(sheet名, [行dict, ...]), ...]。
+
+    同时用 data_only=True / False 各开一次：后者只为识别「是公式、但没存计算结果」的格子。
+    这类格子不能当空格子跳过——跳过等于把整行证据丢了。
+    """
     from openpyxl import load_workbook
 
     wb = load_workbook(path, data_only=True, read_only=True)
+    try:
+        wb_f = load_workbook(path, data_only=False, read_only=True)
+    except Exception:
+        wb_f = None
     sheets = []
-    for ws in wb.worksheets:
-        rows = list(ws.iter_rows(values_only=True))
-        if not rows:
-            continue
-        header_idx = guess_header_row(rows)
-        headers = [_to_text(h) for h in rows[header_idx]]
-        records = []
-        for r in rows[header_idx + 1:]:
-            if not any(c is not None and str(c).strip() for c in r):
+    try:
+        for idx, ws in enumerate(wb.worksheets):
+            rows = list(ws.iter_rows(values_only=True))
+            if not rows:
                 continue
-            records.append({headers[i] if i < len(headers) else f"col{i}": v
-                            for i, v in enumerate(r) if i < len(headers)})
-        sheets.append((ws.title, records))
-    wb.close()
+            frows = []
+            if wb_f is not None and idx < len(wb_f.worksheets):
+                frows = list(wb_f.worksheets[idx].iter_rows(values_only=True))
+            header_idx = guess_header_row(rows)
+            headers = [_to_text(h) for h in rows[header_idx]]
+            records = []
+            for r_i, r in enumerate(rows[header_idx + 1:], start=header_idx + 1):
+                if not any(c is not None and str(c).strip() for c in r):
+                    continue
+                frow = frows[r_i] if r_i < len(frows) else ()
+                rec = {}
+                for i, v in enumerate(r):
+                    if i >= len(headers):
+                        continue
+                    if v is None and i < len(frow) and _is_formula_cell(frow[i]):
+                        v = FORMULA_NO_CACHE + str(frow[i])     # 留证据，别当空格子
+                    rec[headers[i]] = v
+                records.append(rec)
+            sheets.append((ws.title, records))
+    finally:
+        wb.close()
+        if wb_f is not None:
+            wb_f.close()
     return sheets
 
 
@@ -371,6 +412,17 @@ def item_spec(config: QCDailyConfig, product: str, item: str) -> dict:
     return {}
 
 
+def _skip_note(line_no: int, batch_id, item, raw) -> str:
+    """一行被跳过时的提示。必须分清「公式没存结果」与「写了但读不懂」——
+    两种原因不同、补救动作也不同（前者去 Excel 重算保存，后者改写法）。"""
+    who = f"{_to_text(batch_id)}×{_to_text(item)}"
+    if _is_formula_marker(raw):
+        return (f"⚠️ 数据第 {line_no} 行 · {who} 的实测值是公式「{_formula_expr(raw)}」"
+                "但 Excel 没存计算结果，这一行没进判定（其余行照跑）")
+    return (f"⚠️ 数据第 {line_no} 行 · {who} 实测值「{_to_text(raw)}」不是数字"
+            "（含比较符 / 写了未检出 / 格式认不出），这一行没进判定（其余行照跑）")
+
+
 def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyConfig
             ) -> tuple[list[dict], list[str]]:
     """把原始行转成规范行。宽表质检自动翻转。返回 (规范行列表, 提示信息)。"""
@@ -425,7 +477,8 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
             if not batch_id:
                 continue
             product = _to_text(rec.get(prod_h)) if prod_h else ""
-            tested_at = normalize_datetime(rec.get(date_h)) if date_h else ""
+            tested_at = ("" if _is_formula_marker(rec.get(date_h))
+                         else normalize_datetime(rec.get(date_h))) if date_h else ""
             inspector = _to_text(rec.get(insp_h)) if insp_h else ""
             for col, item in item_cols.items():
                 raw = rec.get(col)
@@ -433,9 +486,7 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
                 if val is None:
                     # 空格子 = 未测该项目，静默跳过；写了却读不懂 = 真值未知，绝不改数
                     if raw is not None and str(raw).strip():
-                        notes.append(
-                            f"⚠️ 数据第 {line_no} 行 · {batch_id}×{item} 实测值「{_to_text(raw)}」"
-                            "按原文保留，未参与比较（含比较符或不是数字时真值未知）")
+                        notes.append(_skip_note(line_no, batch_id, item, raw))
                     continue
                 spec = item_spec(config, product, item)
                 lim_col = per_item_limit.get(item)
@@ -468,7 +519,8 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
                           else _to_float(row[f]))
         for f in ("started_at", "finished_at", "tested_at", "occurred_at"):
             if f in row:
-                row[f] = normalize_datetime(row[f])
+                # 日期列是公式且没存结果 → 当空值，不能把占位串当日期带进 dates
+                row[f] = "" if _is_formula_marker(row[f]) else normalize_datetime(row[f])
         for f in ("batch_id", "product", "line", "item", "unit", "direction", "standard",
                   "limit_source", "inspector", "lab", "warehouse", "event"):
             if f in row:
@@ -478,10 +530,7 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
         # 绝不写 NULL 进库（会崩在 models.compare），该行不判、其余照跑（夜测 S1/S6）。
         if ttype == "quality" and row.get("value") is None:
             if raw_value is not None and str(raw_value).strip():
-                notes.append(
-                    f"⚠️ 数据第 {line_no} 行 · {_to_text(row.get('batch_id'))}×"
-                    f"{_to_text(row.get('item'))} 实测值「{_to_text(raw_value)}」"
-                    "按原文保留，未参与比较（含比较符或不是数字时真值未知）")
+                notes.append(_skip_note(line_no, row.get("batch_id"), row.get("item"), raw_value))
             continue
 
         if ttype == "quality":

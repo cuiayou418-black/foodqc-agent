@@ -99,8 +99,13 @@ def _report_rows(cfg: QCDailyConfig) -> list:
             audit_by_date.setdefault(e.get("report_date", ""), e)
 
     rows = []
+    today = date.today().isoformat()
     for day in sorted(set(hist) | set(audit_by_date), reverse=True):
         if not day:
+            continue
+        # 未来日期不进日报列表：探针拿「明天」当日期跑出来的报告会排在最上面，
+        # 演示时第一眼就是「系统出了份 0% 合格的明日日报」（夜测 2026-11-09 G6）
+        if day > today:
             continue
         h, a = hist.get(day, {}), audit_by_date.get(day, {})
         files = _report_files(cfg, day)

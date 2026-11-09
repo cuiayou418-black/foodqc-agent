@@ -149,7 +149,13 @@ def export_excel(m: DailyMetrics, data: CollectedData, meta: dict, path: str) ->
                          b.worst_ratio, "；".join(b.reasons)], fill=fill, num_cols=(5,))
         r += 1
     if not m.abnormal_batches:
-        data_row(ws, r, ["当日无异常批次"] + [""] * 5)
+        # 无生产记录时按批次归集不出来，不能直接写「当日无异常」（夜测 2026-11-09 S1）
+        if m.batch_count <= 0:
+            msg = (f"—（无生产记录，无法按批次归集）：本次 {m.fail_tests} 项次不合格，详见明细页"
+                   if m.fail_tests else "—（无生产记录）：无法按批次归集，按项次无不合格")
+        else:
+            msg = "当日无异常批次"
+        data_row(ws, r, [msg] + [""] * 5)
 
     # ---- 5. 趋势 ----
     ws = sheet("趋势", f"近 {len(m.trend_points)} 日趋势分析", [14, 12, 12, 12, 12, 40])
@@ -373,7 +379,12 @@ def export_pdf(m: DailyMetrics, meta: dict, path: str) -> str:
         t = Table(rows, colWidths=[26 * mm, 26 * mm, 14 * mm, 16 * mm, 78 * mm], style=table_style())
         story.append(t)
     else:
-        story.append(Paragraph("当日无异常批次。", st_body))
+        if m.batch_count <= 0:
+            msg = (f"—（无生产记录，无法按批次归集）：本次 {m.fail_tests} 项次不合格，详见明细。"
+                   if m.fail_tests else "—（无生产记录）：无法按批次归集，按项次无不合格。")
+        else:
+            msg = "当日无异常批次。"
+        story.append(Paragraph(msg, st_body))
 
     # ---------- 四、趋势分析 ----------
     story.append(Paragraph("四、趋势分析", st_h2))
