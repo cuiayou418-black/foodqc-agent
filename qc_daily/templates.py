@@ -334,6 +334,20 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
     else:
         add("<div class='notice'>今日无需关注记录（无超标、无接近限值、无录入疑点、无真值未知项）。</div>")
 
+    # ---------- 未参与判定的记录 ----------
+    # 这些行在导入时就被跳过了（公式没存结果 / 写了比较符或未检出），根本没进判定。
+    # 只在任务卡上提一句不够：看报告、签字的人也必须知道"这一行没被算过"，
+    # 否则会觉得"没出现 = 没问题"（夜测 2026-11-09 S2）。
+    skipped_rows = [str(n) for n in (meta.get("import_notes") or []) if "没进判定" in str(n)]
+    if skipped_rows:
+        add("<h2>未参与判定的记录</h2>")
+        add(f"<p>本次有 <b>{len(skipped_rows)}</b> 条记录<b>没进判定</b>——"
+            "它们既没被算成合格，也没被算成不合格，原值仍在原始表里。</p>")
+        add("<ul>" + "".join(f"<li>{escape(n)}</li>" for n in skipped_rows) + "</ul>")
+        add("<p style='color:#8f959e'>常见原因：实测值是 Excel 公式但没保存计算结果，或写成 "
+            "「&lt;0.5」「未检出」这类读不出数的写法。补齐后重跑即可；"
+            "系统不会替这些格子猜数值。</p>")
+
     # ---------- 二、缺陷分布 ----------
     add("<h2>二、缺陷分布</h2>")
     if m.defect_distribution:

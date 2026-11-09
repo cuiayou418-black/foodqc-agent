@@ -39,6 +39,9 @@ class QCDailyAgent:
         self.history = HistoryStore(os.path.join(self.output_root, "audit", "history.jsonl"))
         self.notifier = Notifier(config)
         self.source = build_data_source(config)
+        # 导入层的提醒（哪几行没进判定）由任务层挂进来，写进日报正文。
+        # 不这么做的话，「少了一项不合格」只会在任务卡上提一句，而看报告、签字的人什么也看不到。
+        self.import_notes: list[str] = []
 
     # ---------------------------------------------------------------- 日期解析
 
@@ -149,6 +152,7 @@ class QCDailyAgent:
                                        if not self.config.active_limits_verified else ""),
                     "suspects": [s.to_dict() for s in suspects],
                     "qc_details": [r.to_dict() for r in data.quality],
+                    "import_notes": list(self.import_notes),
                 }
 
                 if "html" in formats:

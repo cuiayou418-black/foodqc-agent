@@ -363,6 +363,8 @@ class TaskRunner:
         self._trace(res, "validating", "config_copy",
                     f"只改 dsn → {cfg.raw['source']['sql']['dsn']}")
         agent = QCDailyAgent(cfg)
+        # 把导入层的「哪几行没进判定」带进日报正文，让看报告的人也知道少了什么
+        agent.import_notes = list(ctx.get("notes") or [])
         self._state(res, "analyzing", "调 QCDailyAgent.run（八步流水线原样）")
         result = agent.run(report_date=date.fromisoformat(req.report_date),
                            push=False, formats=req.formats)

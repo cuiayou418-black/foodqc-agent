@@ -96,6 +96,22 @@ class TestFormulaCellIsNotSwallowed(unittest.TestCase):
                              "日期列不能被公式占位串污染")
 
 
+    def test_report_body_lists_skipped_rows(self):
+        """跳过的行必须进日报正文，不能只在任务卡上提一句。"""
+        note = ("⚠️ 数据第 1 行 · DEMO-FV01×水分含量 的实测值是公式「=13.6」"
+                "但 Excel 没存计算结果，这一行没进判定（其余行照跑）")
+        html = render_html(_metrics(batch_count=1, total_tests=2, fail_tests=1),
+                           _meta(import_notes=[note, "别的无关提醒"]))
+        self.assertIn("未参与判定的记录", html)
+        self.assertIn("=13.6", html)
+        self.assertIn("没进判定", html)
+        self.assertNotIn("别的无关提醒", html)
+
+    def test_no_skipped_rows_no_section(self):
+        html = render_html(_metrics(batch_count=1, total_tests=2), _meta(import_notes=[]))
+        self.assertNotIn("未参与判定的记录", html)
+
+
 class TestMissingDatesIsNotAMismatch(unittest.TestCase):
     """S3：日期读不出来 ≠ 日期不匹配，不能叫人去改日期列。"""
 
