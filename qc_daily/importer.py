@@ -78,6 +78,43 @@ KNOWN_ITEMS = ["酸价", "过氧化值", "水分及挥发物", "不溶性杂质"
                "出糙率", "整精米率", "杂质含量", "水分含量",
                "黄粒米含量", "谷外糙米含量", "互混率"]
 
+#: 化验室简称 → 词典标准名。
+#: 真实送检表的列头写「水分」「杂质」「黄粒」「谷外糙米」，词典里是「水分含量」
+#: 「杂质含量」「黄粒米含量」「谷外糙米含量」——不做这层映射，32 列里只认出出糙率
+#: 和整精米率两项（2026-11-09 实测，用户连续三次问到「还是只有两个指标吗」）。
+#:
+#: ⚠️ 只收**一对一**、语义明确的简称。故意不映射：
+#:   「同类互混」「长短互混」→ 互混率  ← 两者是不同指标，合并会在同批同日造出重复
+#:   记录，被 DUP_QC 整单拦下；宁可让它认不出、如实说认不出，也不悄悄合并。
+#:   「整米」→ 整精米率  ← 含义不确定（可能是整米率而非整精米率），不猜。
+ITEM_ALIASES: dict[str, str] = {
+    "水分": "水分含量",
+    "杂质": "杂质含量",
+    "黄粒": "黄粒米含量",
+    "黄粒米": "黄粒米含量",
+    "谷外糙米": "谷外糙米含量",
+    "出糙": "出糙率",
+    "整精米": "整精米率",
+}
+
+_NORM_ITEM_ALIASES: dict[str, str] | None = None
+
+
+def _item_alias_map() -> dict[str, str]:
+    """简称归一化后的查表：{'水分': '水分含量', ...}"""
+    global _NORM_ITEM_ALIASES
+    if _NORM_ITEM_ALIASES is None:
+        _NORM_ITEM_ALIASES = {_norm_header(k): v for k, v in ITEM_ALIASES.items()}
+    return _NORM_ITEM_ALIASES
+
+
+def normalize_item(name) -> str:
+    """把列头/项目名换成词典里的标准名；认不出就原样返回，绝不硬凑。"""
+    s = _to_text(name).strip()
+    if not s:
+        return s
+    return _item_alias_map().get(_norm_header(s), s)
+
 #: 表类型识别关键词（按 sheet 名 / 文件名）
 TYPE_KEYWORDS = {
     "production": ["生产", "投产", "mes", "production"],
@@ -433,11 +470,21 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
     # ---- 质检宽表：有批次列、无 item/value 列，但有多个"检测项目"列 ----
     # 列名按归一化后匹配（'酸价(mg/g)' → '酸价'），项目名取归一化后的干净名字
     norm_to_item = {_norm_header(i): i for i in KNOWN_ITEMS}
+    alias = _item_alias_map()
     item_cols = {}  # {原始表头: 干净项目名}
+    seen_items: dict[str, str] = {}   # 干净项目名 → 第一个认领它的表头
     for h in records[0].keys():
         nh = _norm_header(h)
-        if nh in norm_to_item:
-            item_cols[h] = norm_to_item[nh]
+        item = norm_to_item.get(nh) or alias.get(nh)
+        if not item:
+            continue
+        if item in seen_items:
+            # 两列指向同一指标（如同时有「水分」「水分含量」）：只认第一列。
+            # 否则同批同日同项目会出现两条记录，被 DUP_QC 整单拦下，反而更难查。
+            notes.append(f"⚠️ 列「{h}」与「{seen_items[item]}」都指向「{item}」，只认前者")
+            continue
+        seen_items[item] = h
+        item_cols[h] = item
     is_wide_quality = (ttype == "quality" and "item" not in mapping.values()
                        and "value" not in mapping.values() and item_cols)
     # 一列项目名都认不出来时，不能静默走长表分支变成 0 条记录——
@@ -525,6 +572,11 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
                   "limit_source", "inspector", "lab", "warehouse", "event"):
             if f in row:
                 row[f] = _to_text(row[f])
+
+        # 项目名可能是简称（「水分」），换成词典标准名（「水分含量」），
+        # 否则 item_spec 查不到限值、或者被当成不认识的项目
+        if ttype == "quality" and row.get("item"):
+            row["item"] = normalize_item(row["item"])
 
         # 实测值读不懂（>5.0 / ＜0.5 / 十三点二 / 未检出）：真值未知。
         # 绝不写 NULL 进库（会崩在 models.compare），该行不判、其余照跑（夜测 S1/S6）。
