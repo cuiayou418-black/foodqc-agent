@@ -285,7 +285,20 @@ def _read_xlsx(path: str) -> list[tuple[str, list[dict]]]:
     同时用 data_only=True / False 各开一次：后者只为识别「是公式、但没存计算结果」的格子。
     这类格子不能当空格子跳过——跳过等于把整行证据丢了。
     """
+    import zipfile
     from openpyxl import load_workbook
+
+    # 先用 zipfile 探一次头：坏文件不必交给 openpyxl 试一轮再抛
+    # （实测那条路径慢 2.2 秒，还会把 "File is not a zip file" 端上 headline）。
+    # 化验员看到英文异常会当成系统故障去重启；这里一律翻成人话。
+    try:
+        with zipfile.ZipFile(path) as z:
+            if "xl/workbook.xml" not in z.namelist():
+                raise zipfile.BadZipFile("缺少 xl/workbook.xml")
+    except (zipfile.BadZipFile, OSError) as e:
+        raise ValueError(
+            "这个 Excel 打不开：文件可能已损坏，或者其实是改了扩展名的别的文件。"
+            "请用 Excel 打开后「另存为 .xlsx」再传") from e
 
     wb = load_workbook(path, data_only=True, read_only=True)
     try:
@@ -484,23 +497,86 @@ def resolve_direction(sheet_dir, spec_dir, item: str, noted: set, notes: list) -
     return a or s
 
 
-def _skip_note(line_no: int, batch_id, item, raw) -> str:
-    """一行被跳过时的提示。必须分清「公式没存结果」与「写了但读不懂」——
-    两种原因不同、补救动作也不同（前者去 Excel 重算保存，后者改写法）。"""
+def _skip_note(line_no: int, batch_id, item, raw, whole_row: bool = True) -> str:
+    """跳过时的提示。必须分清「公式没存结果」与「写了但读不懂」——
+    两种原因不同、补救动作也不同（前者去 Excel 重算保存，后者改写法）。
+
+    whole_row：长表一行一项，跳过的是整行；宽表一行多项，跳过的只是**一格**，
+    同一行其它项目照常判定。说成「这一行没进判定」会让化验室以为整批证据丢了。
+
+    ⚠️ 这里**不写**「其余行照跑」：逐行函数不知道全局。只有一行数据的表里，
+    这句话是假的（夜测 11-10 r05：上面说「一行都没读出来」，下面说「其余行照跑」）。
+    总账由 `_finalize_skip_notes` 在 convert 收尾处统一补。
+    """
     who = f"{_to_text(batch_id)}×{_to_text(item)}"
+    tail = ("这一行没进判定" if whole_row else
+            "这一格没进判定（同一行其它项目照常判定）")
     if _is_formula_marker(raw):
         return (f"⚠️ 数据第 {line_no} 行 · {who} 的实测值是公式「{_formula_expr(raw)}」"
-                "但 Excel 没存计算结果，这一行没进判定（其余行照跑）")
+                f"但 Excel 没存计算结果，{tail}")
     return (f"⚠️ 数据第 {line_no} 行 · {who} 实测值「{_to_text(raw)}」不是数字"
-            "（含比较符 / 写了未检出 / 格式认不出），这一行没进判定（其余行照跑）")
+            f"（含比较符 / 写了未检出 / 格式认不出），{tail}")
 
 
-def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyConfig
-            ) -> tuple[list[dict], list[str]]:
-    """把原始行转成规范行。宽表质检自动翻转。返回 (规范行列表, 提示信息)。"""
+def _finalize_skip_notes(notes: list, skip_notes: list, skipped_lines: set,
+                         total_rows: int, whole_row: bool = True) -> None:
+    """跳过的总账：逐条 note 只说局部，这里才知道「一共几行、还剩几行」。"""
+    if not skip_notes:
+        return
+    notes.extend(skip_notes)
+    n = len(skipped_lines)
+    if not whole_row:
+        # 宽表：按格跳，不按行跳。别说成「其余 N 行照跑」——那 3 行其实也跑了大半。
+        notes.append(f"⚠️ 本表共 {total_rows} 行数据，其中 {n} 行有项目没进判定；"
+                     "这些行的其它项目、以及其余行的全部项目照常判定"
+                     "（逐格跳过，不是整行作废）。")
+        return
+    if total_rows > 0 and n >= total_rows:
+        # 不用 ⛔ 前缀：runner 会把「⛔」开头的 note 当成「导入层判死」提前返回，
+        # 短码错标成「表结构不合要求」，而这里的问题其实是实测值写法。
+        # 也不复述「其余行照跑」这几个字——那正是要修掉的假句子。
+        notes.append(f"⚠️ 本表共 {total_rows} 行数据，{n} 行的实测值读不懂，"
+                     "一行都没进判定，本次没跑；表里没有其它数据行。")
+    else:
+        notes.append(f"⚠️ 本表共 {total_rows} 行数据，其中 {n} 行有实测值没进判定；"
+                     f"其余 {total_rows - n} 行照跑。")
+
+
+def _norm_std(v) -> str:
+    """标准号归一：只用于「表里写的版本」与「当前执行版」对一眼，不参与判定。"""
+    return (re.sub(r"[\s\u00a0\u3000]", "", str(v or ""))
+            .replace("—", "-").replace("－", "-").upper())
+
+
+def _check_version(rows: list, config: QCDailyConfig, notes: list, noted: set) -> None:
+    """宽表分支的版本对眼：表里填的标准号 ≠ 当前执行版，就明说不得放行。"""
+    active = str(config.standard_version or "").strip()
+    for row in rows:
+        used = str(row.get("standard") or "").strip()
+        if active and used and _norm_std(used) != _norm_std(active):
+            if used not in noted:
+                noted.add(used)
+                notes.append(
+                    f"【版本】表里「标准号」写的是 {used}，当前执行版是 {active}；"
+                    "本批结论仅供复核，不得作为放行依据。限值仍取自表内、出处可逐行追溯，"
+                    "但版本是否适用须由化验室确认。")
+            return
+
+
+def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyConfig,
+            stats: dict | None = None) -> tuple[list[dict], list[str]]:
+    """把原始行转成规范行。宽表质检自动翻转。返回 (规范行列表, 提示信息)。
+
+    stats 可选：调用方传 dict 进来，收 {data_rows, skipped_rows} 两个结构化计数，
+    供上层把「一行都没读出来」说成确定话，不靠猜文案（夜测 11-10 r05）。
+    """
     mapping = map_headers(records)
     notes: list[str] = []
     rows: list[dict] = []
+    skip_notes: list[str] = []
+    skipped_lines: set[int] = set()
+    version_noted: set = set()
+    total_rows = len(records)
 
     # ---- 质检宽表：有批次列、无 item/value 列，但有多个"检测项目"列 ----
     # 列名按归一化后匹配（'酸价(mg/g)' → '酸价'），项目名取归一化后的干净名字
@@ -569,7 +645,9 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
                 if val is None:
                     # 空格子 = 未测该项目，静默跳过；写了却读不懂 = 真值未知，绝不改数
                     if raw is not None and str(raw).strip():
-                        notes.append(_skip_note(line_no, batch_id, item, raw))
+                        skip_notes.append(_skip_note(line_no, batch_id, item, raw,
+                                                     whole_row=False))
+                        skipped_lines.add(line_no)
                     continue
                 spec = item_spec(config, product, item)
                 lim_col = per_item_limit.get(item)
@@ -587,6 +665,12 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
                                     or spec.get("limit_source", ""),
                     "tested_at": tested_at, "inspector": inspector, "lab": "",
                 })
+        _check_version(rows, config, notes, version_noted)
+        _finalize_skip_notes(notes, skip_notes, skipped_lines, total_rows,
+                             whole_row=False)
+        if stats is not None:
+            stats["data_rows"] = total_rows
+            stats["skipped_rows"] = len(skipped_lines)
         return rows, notes
 
     # ---- 常规长表 ----
@@ -620,7 +704,8 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
         # 绝不写 NULL 进库（会崩在 models.compare），该行不判、其余照跑（夜测 S1/S6）。
         if ttype == "quality" and row.get("value") is None:
             if raw_value is not None and str(raw_value).strip():
-                notes.append(_skip_note(line_no, row.get("batch_id"), row.get("item"), raw_value))
+                skip_notes.append(_skip_note(line_no, row.get("batch_id"), row.get("item"), raw_value))
+                skipped_lines.add(line_no)
             continue
 
         if ttype == "quality":
@@ -645,7 +730,24 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
                 notes.append(f"⚠️ {row.get('batch_id')}×{row.get('item')} 未取到限值（{reason}）")
         if not row.get("batch_id"):
             continue
+        # 「表里填哪个标准号就按哪版判」缺一道对眼：表内限值以表为
+        # 准是有意设计（出处可逐行追溯），但没人问一句这个版本对不对。
+        # 声明与判定行当场打架（夜测 11-10 r03）：表里 GB 1350—2025，
+        # 配置执行 GB 1350—2009、且 2025 版明示不得用于判旧货。
+        active = str(config.standard_version or "").strip()
+        used = str(row.get("standard") or "").strip()
+        if (active and used and used not in version_noted
+                and _norm_std(used) != _norm_std(active)):
+            version_noted.add(used)
+            notes.append(
+                f"【版本】表里「标准号」写的是 {used}，当前执行版是 {active}；"
+                "本批结论仅供复核，不得作为放行依据。限值仍取自表内、出处可逐行追溯，"
+                "但版本是否适用须由化验室确认。")
         rows.append(row)
+    _finalize_skip_notes(notes, skip_notes, skipped_lines, total_rows)
+    if stats is not None:
+        stats["data_rows"] = total_rows
+        stats["skipped_rows"] = len(skipped_lines)
     return rows, notes
 
 
@@ -688,7 +790,8 @@ def import_path(path: str, db_path: str, config: QCDailyConfig,
         files.append(path)
 
     summary = {"files": [], "rows": {"production": 0, "quality": 0, "warehouse": 0},
-               "dates": set(), "notes": [], "errors": []}
+               "dates": set(), "notes": [], "errors": [],
+               "data_rows": 0, "skipped_rows": 0}
     conn = None if dry_run else sqlite3.connect(db_path)
     if conn:
         _ensure_tables(conn)
@@ -710,7 +813,10 @@ def import_path(path: str, db_path: str, config: QCDailyConfig,
                         f"{os.path.basename(f)}[{sheet_name}] 无法识别表类型，已跳过"
                         f"（表头: {list(records[0].keys())[:8]}）")
                     continue
-                rows, notes = convert(sheet_name, records, ttype, config)
+                stats: dict = {}
+                rows, notes = convert(sheet_name, records, ttype, config, stats=stats)
+                summary["data_rows"] += int(stats.get("data_rows") or 0)
+                summary["skipped_rows"] += int(stats.get("skipped_rows") or 0)
                 summary["notes"].extend(f"{os.path.basename(f)}[{sheet_name}] {n}" for n in notes)
                 dates = {r[DATE_FIELD[ttype]][:10] for r in rows if r.get(DATE_FIELD[ttype])}
                 summary["dates"].update(dates)

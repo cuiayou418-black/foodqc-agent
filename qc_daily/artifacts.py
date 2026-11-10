@@ -73,9 +73,19 @@ def index_runs(output_root: str = "runs", limit: int = 30) -> list[dict]:
             s = json.loads(f.read_text(encoding="utf-8"))
         except (OSError, ValueError):
             continue
+        # 终态事件码（no_rows / missing_limits / validation_error …）让历史列表
+        # 能一眼分清「哪种错」，不用靠 errors[0] 前 22 字去猜（夜测 11-10 r05）。
+        stop_code = ""
+        for t in reversed(s.get("trace") or []):
+            if str(t.get("state", "")) not in ("failed", "partial", "pending_review"):
+                continue
+            ev = str(t.get("event", ""))
+            if ev and ev not in ("state_change", "finished", "report_written"):
+                stop_code = ev
+                break
         out.append({"run_id": s.get("run_id", d.name), "task_id": s.get("task_id", ""),
                     "status": s.get("status", ""), "report_date": s.get("report_date", ""),
-                    "started_at": s.get("started_at", ""),
+                    "started_at": s.get("started_at", ""), "stop_code": stop_code,
                     # 历史列表要能说「错在哪」，否则同名的六条"出错了"完全看不出差别
                     "errors": [str(e) for e in (s.get("errors") or []) if str(e).strip()]})
     return out

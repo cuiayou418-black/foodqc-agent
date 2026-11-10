@@ -105,6 +105,53 @@ _VERDICT_RE = re.compile(
     r"代码判定「(?P<verdict>[^」]+)」（(?P<src>.*)）\s*$")
 _DOUBT_PREFIX = "该值有录入疑点，结论不可用于放行"
 
+# 「按规矩停下」≠「系统故障」。缺限值、空表、非 DEMO 批次、校验拦下……
+# 七种停法共用一句红字「出错了」，使用人会去重启、去重传，而不是去补数据
+# （夜测 2026-11-10 第 3/4/5 轮连续三晚记同一条）。
+# 短码取自 trace 的终态事件，不靠 errors[0] 的字符串猜——那是拿最不确定的
+# 方式报告一个确定性结果。
+_STOP_CN = {
+    "no_rows":             ("表里没读到数据行", "warn"),
+    "values_unreadable":   ("实测值读不懂", "warn"),
+    "no_dates":            ("日期列读不出", "warn"),
+    "import_errors":       ("文件打不开", "warn"),
+    "import_blocked":      ("表结构不合要求", "warn"),
+    "unmapped_headers":    ("表头认不出", "warn"),
+    "date_mismatch":       ("日期与表内不一致", "warn"),
+    "missing_limits":      ("缺限值、按规矩没判", "warn"),
+    "real_batch_rejected": ("有非 DEMO 批次", "warn"),
+    "validation_error":    ("校验拦下、未发报告", "warn"),
+    "request_rejected":    ("输入不合法", "warn"),
+    "fingerprint_mismatch": ("指纹校验未通过", "bad"),
+    "db_error":            ("独立库读取失败", "bad"),
+    "exception":           ("运行中断", "bad"),
+}
+
+
+def _stop_code(d: dict) -> str:
+    """从 trace 倒序找终态事件码；找不到返回空串（保持原显示，不瞎猜）。"""
+    for t in reversed(d.get("trace") or []):
+        if str(t.get("state", "")) not in ("failed", "partial", "pending_review"):
+            continue
+        ev = str(t.get("event", ""))
+        if ev and ev not in ("state_change", "finished", "report_written"):
+            return ev
+    return ""
+
+
+def _is_verdict_line(raw: str) -> bool:
+    """这一行是「一个检测项的结论」，还是一句范围/版本/放行声明？
+
+    只用来决定「要不要进分组计数」，不参与任何判定。宁可把可疑行留着，
+    也不能把真结论踢掉：两种特征命中任一就算数据行。
+    """
+    s = str(raw or "").strip()
+    if "→ 代码判定「" in s:
+        return True
+    # 批号开头（DEMO-001 / B2026-11）+ 分隔符「·」= 逐项明细行；
+    # 说明文字都是中文开头（「标准版本：」「感官项…」「数据范围：」）。
+    return bool(re.match(r"^[A-Za-z][A-Za-z0-9_-]*\d[^·]{0,40}·", s))
+
 
 def _dedup_src(src: str) -> str:
     """出处里标准号常被拼两遍（GB 1350—2025 GB 1350—2025 表1…），去掉相邻重复段。
@@ -256,40 +303,81 @@ def _priority_files(arts: list[dict], run_id: str) -> list[dict]:
 def _build_view(d: dict, run_id: str) -> dict:
     """把一份状态 dict 翻成前端直接渲染的结构；前端不再做业务判断。"""
     status_cn, status_tone = _STATUS_CN.get(d.get("status", ""), (d.get("status") or "未知", "mute"))
+    if d.get("status") == "failed":
+        # 只有真异常才配红字「出错了」；按规矩停下的一律降级成黄色短码。
+        friendly = _STOP_CN.get(_stop_code(d))
+        if friendly:
+            status_cn, status_tone = friendly
     arts = d.get("artifacts") or []
     sec = d.get("sections") or {}
     head, head_tone = _headline(d)
 
     groups = []
+    section_notes: list[str] = []
     for key in ("待人工复核", "已确认", "未覆盖"):   # 要人动手的排最前
-        items = [_clean_item(x) for x in (sec.get(key) or [])]
+        # 「标准版本…」「放行决策…」「感官项…」「数据范围：DEMO-only」是说明文字，
+        # 不是检测项。三组里都有，不止「待人工复核」——旧版 count=len(items)
+        # 一视同仁，40 个检测项被数成 43，录入自查明明 0 疑点却显示「亲自确认 2」
+        # （夜测 11-10 r03/r04；11-09 报告里 M8 误判成「计数口径未定」）。
+        # 判据与 _headline 一致：逐项结论行都含「→ 代码判定「」；再补一条
+        # 「以批号开头且带 · 」兜住缺限值/真值未知这类没有结论字样的数据行。
+        # ⚠️ 必须在 _clean_item **之前**判：清洗后「→ 代码判定「」会被改写掉。
+        raw_items = [str(x) for x in (sec.get(key) or [])]
+        verdict_raw = [x for x in raw_items if _is_verdict_line(x)]
+        for x in raw_items:
+            if not _is_verdict_line(x):
+                section_notes.append(f"说明：{x[:120]}")
+        items = [_clean_item(x) for x in verdict_raw]
         label, tone = _SECTION_VIEW.get(key, (key, "mute"))
         groups.append({"key": key, "label": label, "tone": tone,
                        "count": len(items), "items": items})
 
+    # 结构化 critical 告警：detail 里本来就写着批号、项名和十几个 refs，
+    # 旧版只读 notes + metrics，从不读 d["alerts"] → 最该给人看的那条留在 JSON 里
+    # （夜测 11-10 r04：重复批次被拦得对，界面却不说哪一批）。
+    alerts: list[str] = []
+    for a in (d.get("alerts") or []):
+        if not isinstance(a, dict):
+            continue
+        if str(a.get("level", "")).lower() not in ("error", "critical"):
+            continue
+        detail = str(a.get("detail") or a.get("message") or "").strip()
+        if detail:
+            alerts.append(detail[:400])
+    alerts = alerts[:2]
+    # 范围/版本/放行声明紧跟 critical：这些是「这份数据能不能用」的前提，
+    # 不能被逐行明细挤到截断线外（否则又只剩一句「已确认」摆在那儿）。
+    alerts.extend(section_notes)
+
     # 「下一步怎么办」写在 notes 里，旧版不进 view，卡片上看不到（夜测 M6）。
-    # 放在最前面，别被 metrics 里的一堆预警挤掉。
-    note_lines = []
-    for n in (d.get("notes") or [])[:3]:
-        s = str(n).strip()
+    # 旧版先 notes[:3] 再 note_lines[:2] 双重截断：3 行读不懂只列第 1 行，
+    # 使用人改完第 1 行重传还会再撞两次同样的错（夜测 11-10 r04）。全留。
+    for n in (d.get("notes") or []):
+        # 导入层给每条 note 加了「文件名[sheet] 」前缀；剥掉它再判语气，
+        # 否则一句「下一步：…」会被套成「提示：xxx.xlsx[记录] 下一步：…」。
+        s = re.sub(r"^[^\s\[]*\[[^\]]*\]\s*", "", str(n).strip())
         if not s or s.startswith("[pending_review]"):
             continue
-        note_lines.append(s if s.startswith(("下一步", "原因", "提示", "⚠️", "⛔"))
-                          else f"提示：{s}")
-    alerts = note_lines[:2]
+        alerts.append(s if s.startswith(("下一步", "原因", "提示", "说明",
+                                         "⚠️", "⛔", "【版本】"))
+                      else f"提示：{s}")
     for a in (d.get("metrics") or {}).get("alerts") or []:
         alerts.append(str(a))
     errs = [str(e) for e in (d.get("errors") or []) if str(e).strip()]
     # 失败时第一条已经当一句话结论了，别在这儿再念一遍
     for e in (errs[1:] if (d.get("status") == "failed" and errs) else errs):
         alerts.append(f"报错：{e}")
+    # 上限放宽到 16：说明行已提到最前，逐行明细不该再把它们挤出屏幕。
+    if len(alerts) > 16:
+        rest = len(alerts) - 16
+        alerts = alerts[:16] + [f"另有 {rest} 条提醒（完整见 summary.json）"]
 
     tech_files = [a["name"] for a in arts
                   if not re.search(r"\.(html|xlsx|pdf)$", a["name"], re.I)]
     return {
         "status": d.get("status", ""), "status_cn": status_cn, "status_tone": status_tone,
         "headline": head, "headline_tone": head_tone,
-        "alerts": alerts[:6],
+        "alerts": alerts,
         "files": _priority_files(arts, run_id),
         "groups": groups,
         "task_name": (TASKS[d["task_id"]].name if d.get("task_id") in TASKS else "（历史任务）"),
@@ -329,10 +417,19 @@ def _history_rows(limit: int = 10) -> list[dict]:
                 when = datetime.strptime(when, "%Y-%m-%d %H:%M").strftime("%m-%d %H:%M")
             except ValueError:
                 pass
+        stop = str(r.get("stop_code") or "")
         cn, tone = _STATUS_CN.get(r.get("status", ""), (r.get("status") or "", "mute"))
+        if r.get("status") == "failed" and stop in _STOP_CN:
+            cn, tone = _STOP_CN[stop]
         errs = [e for e in (r.get("errors") or []) if str(e).strip()]
         reason = str(errs[0]).strip() if errs else ""
-        if len(reason) > 22:                      # 右栏窄，只留一句能看懂的
+        # 右栏窄：先给 ≤10 字的短错因码，再挂一点原文。旧版截 22 字，
+        # 四种不同的病前 22 字全一样，区分点恰好被切掉（夜测 11-10 r05）。
+        short = _STOP_CN.get(stop, ("", ""))[0]
+        if short:
+            reason = f"{short}：{reason[:14] + '…' if len(reason) > 14 else reason}" \
+                if reason else short
+        elif len(reason) > 22:
             reason = reason[:22] + "…"
         out.append({"run_id": r.get("run_id", ""), "name": name, "when": when,
                     "status_cn": cn, "tone": tone, "reason": reason, "count": 1,

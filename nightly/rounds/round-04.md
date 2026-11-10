@@ -1,15 +1,15 @@
-# 第 4/6 轮 · 2026-11-07T23:10:54
+# 第 4/6 轮 · 2026-11-08T03:14:12
 
-服务：复用已在运行的服务
+服务：脚本临时拉起服务（pid=26040）
 
 ## [PASS] TB-05 · 18 批 126 项（压力）
 - 输入：`做成今天的日报`
     http: 200
-    seconds: 0.04
-    file: 20261107-231054_夜测_长表.csv
+    seconds: 0.09
+    file: 20261108-031412_夜测_长表.csv
     file_kb: 18.1
-    run_id: T20261107-0484388ad6
-    run_seconds: 1.5
+    run_id: T20261108-1483b9a566
+    run_seconds: 4.5
     status: done
     status_cn: 做完了
     headline: 18 批共 126 个检测项：126 项数值符合、0 项不符合；另有 2 条提醒
@@ -21,10 +21,10 @@
 ## [PASS] TB-06 · xlsx 多 sheet
 - 输入：`做成日报`
     http: 200
-    seconds: 0.05
-    file: 20261107-231057_夜测_多sheet.xlsx
+    seconds: 0.06
+    file: 20261108-031417_夜测_多sheet.xlsx
     file_kb: 6.3
-    run_id: T20261107-73ee60cec5
+    run_id: T20261108-cb062c1f3d
     run_seconds: 1.5
     status: done
     status_cn: 做完了
@@ -37,10 +37,10 @@
 ## [WARN] BD-01 · 表头上方有标题行
 - 输入：`做成日报`
     http: 200
-    seconds: 0.05
-    file: 20261107-231101_夜测_标题行.csv
+    seconds: 0.04
+    file: 20261108-031421_夜测_标题行.csv
     file_kb: 0.3
-    run_id: T20261107-ced2a2489b
+    run_id: T20261108-2d9a59a30d
     run_seconds: 1.5
     status: failed
     status_cn: 出错了
@@ -55,9 +55,9 @@
 - 输入：`做成日报`
     http: 200
     seconds: 0.05
-    file: 20261107-231102_夜测_百分号.csv
+    file: 20261108-031423_夜测_百分号.csv
     file_kb: 0.3
-    run_id: T20261107-3471e96a05
+    run_id: T20261108-363be18248
     run_seconds: 1.5
     status: failed
     status_cn: 出错了
@@ -72,9 +72,9 @@
 - 输入：`做成日报`
     http: 200
     seconds: 0.05
-    file: 20261107-231104_夜测_未检出.csv
+    file: 20261108-031424_夜测_未检出.csv
     file_kb: 0.5
-    run_id: T20261107-25edb3ac2a
+    run_id: T20261108-ba895bc82b
     run_seconds: 1.5
     status: failed
     status_cn: 出错了
@@ -89,13 +89,13 @@
 - 输入：`做成日报`
     http: 200
     seconds: 0.04
-    file: 20261107-231105_夜测_公式列.xlsx
+    file: 20261108-031426_夜测_公式列.xlsx
     file_kb: 5.0
-    run_id: T20261107-840e841b35
+    run_id: T20261108-a112ccc30e
     run_seconds: 1.5
     status: failed
     status_cn: 出错了
-    headline: 没做 —— 输入表日期 [] 与 report_date=2026-11-07 不匹配；source.sql.queries 用 date(tested_at)=:report_date，静默跑会出空报告
+    headline: 没做 —— 输入表日期 [] 与 report_date=2026-11-08 不匹配；source.sql.queries 用 date(tested_at)=:report_date，静默跑会出空报告
     files: 下载 Excel 表
     groups: ('必须你亲自确认', 0) / ('机器算完、看不出疑点', 0) / ('没找到标准依据，机器不判', 0)
     alerts: （空）
@@ -106,9 +106,9 @@
 - 输入：`做成日报`
     http: 200
     seconds: 0.05
-    file: 20261107-231107_夜测_长表.csv
+    file: 20261108-031428_夜测_长表.csv
     file_kb: 2.1
-    run_id: T20261107-b9f493e396
+    run_id: T20261108-4599754dc7
     run_seconds: 1.5
     status: done
     status_cn: 做完了
@@ -121,10 +121,10 @@
 ## [WARN] BD-06 · 重复批次号 3 次
 - 输入：`做成日报`
     http: 200
-    seconds: 0.05
-    file: 20261107-231109_夜测_长表.csv
+    seconds: 0.06
+    file: 20261108-031429_夜测_长表.csv
     file_kb: 3.1
-    run_id: T20261107-e6c54f529e
+    run_id: T20261108-772de37609
     run_seconds: 1.5
     status: failed
     status_cn: 出错了
@@ -138,10 +138,10 @@
 ## [WARN] BD-07 · 缺限值列（只剩实测值）
 - 输入：`做成日报`
     http: 200
-    seconds: 0.03
-    file: 20261107-231110_夜测_缺限值.csv
+    seconds: 0.05
+    file: 20261108-031431_夜测_缺限值.csv
     file_kb: 0.1
-    run_id: T20261107-a7f9cadc69
+    run_id: T20261108-2531845e82
     run_seconds: 1.5
     status: failed
     status_cn: 出错了

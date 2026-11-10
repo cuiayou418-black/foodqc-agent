@@ -25,6 +25,12 @@ _CAPABILITY = ("你能干什么", "你能做什么", "你会什么", "你能干�
                "你是谁", "介绍一下", "自我介绍", "能帮我", "帮助", "help",
                "能做什么", "功能", "能力")
 _OUT_OF_SCOPE = ("讲个笑话", "写首诗", "天气", "翻译", "讲个故事", "聊聊天")
+# 技术类越界与闲聊走同一条路。⚠️ 不能裸加「代码」二字：
+# 判定行文案里有「代码判定「合格」」，是业务词，裸加会把正常问答也拦掉
+# （夜测 11-10 r03：问「帮我写一段 Python 爬虫代码」被答成「我没找到资料」）。
+_OUT_OF_SCOPE_RE = re.compile(
+    r"(写|编|搞|来|给)[^。？!！]{0,8}(代码|爬虫|脚本|程序|网页|网站|软件)"
+    r"|(爬虫|Python|python|SQL|sql|写程序|做网站|做网页|前端|后端|翻译一段)")
 _GREET = ("你好", "您好", "hi", "hello", "在吗", "嗨", "早上好")
 _VAGUE_BUSINESS = ("帮我看", "看一下", "怎么样", "这批", "看看", "分析一下",
                    "检查一下", "有问题吗", "有没有问题", "帮我查", "咋样")
@@ -177,7 +183,27 @@ def _must_entities(question: str) -> tuple[list[str], list[str]]:
             ents.append(cn)
     ents += [c for c in _CONTAMINANTS if c in question and c not in ents]
     ents += [t for t in indicators() if t in question and t not in ents]
+    # 「水分」「杂质」这类简称：指标名去掉量纲后缀后再比一次。
+    # 不这么做，「大米的水分限值是多少」识别不出指标，掉进通用兜底，
+    # 而「大米水分含量限值是多少」走的是「库里没有这条限值」——
+    # 同一个问题两种说法（夜测 11-10 r02，4/4 分叉）。
+    for t in indicators():
+        for suf in ("含量", "率", "量"):
+            stem = t[:-len(suf)] if t.endswith(suf) else ""
+            if stem and stem in question and t not in ents:
+                ents.append(t)
+                break
     cats = [c for c in _CATEGORY if c in question]
+    # 「糙米」是「谷外糙米含量」的子串：问「谷外糙米限值是多少」会被当成问糙米，
+    # 反问话术里凭空多出「（糙米）」。指标名里裹着的字不算独立物类。
+    for ind in indicators():
+        stem = ind
+        for suf in ("含量", "率", "量"):
+            if stem.endswith(suf):
+                stem = stem[:-len(suf)]
+                break
+        if stem and stem in question:
+            cats = [c for c in cats if c not in stem]
     return ents, cats
 
 
@@ -189,6 +215,71 @@ def _ent_in(ent: str, text: str) -> bool:
         if cn == ent and alias in text.lower():
             return True
     return False
+
+
+def _version_notice() -> str:
+    """命中 GB 1350 语料时，把「当前执行哪一版」说清。
+
+    语料是已发布的 2025 版，配置里当前执行的是 2009 版且限值待人工核对。
+    不给这句，答案贴着 2025 的数却没说它不能用来判今天的货（夜测 11-10 严重②）。
+    """
+    try:
+        from .config import QCDailyConfig
+        c = QCDailyConfig.load()
+        active = str(getattr(c, "standard_version", "") or "").strip()
+        preset = [k for k, v in (getattr(c, "standard_versions", None) or {}).items()
+                  if isinstance(v, dict) and v.get("role") == "preset"]
+        if not active and not preset:
+            return ""
+        tail = ("；" + "、".join(preset) + " 为预置、未到实施日期，不得用于判旧货") if preset else ""
+        return f"版本口径：当前执行 {active}（限值待人工核对，不得作为放行依据）{tail}"
+    except Exception:
+        return ""          # 配置读不到就别硬塞，宁可少一句也不编
+
+
+def _mixed_quality_tables(question: str, hits: list[str]) -> bool:
+    """GB 1350 的表1（籼）与表2（粳）被整节糊上来 → 低置信度命中。
+
+    实测「稻谷水分限值是多少」一次返回 575 字、7 个指标全部数字，
+    里面同时有 ≤13.5（表1）与 ≤14.5（表2）。7 个 must_contain 全被喂饱，
+    脚本记满分，人却拿不到能用的答案（DECISIONS_2026-11-10 §0 勘误）。
+    """
+    if not any(w in question for w in ("限值", "多少", "合格线", "几等", "限量", "上限", "下限")):
+        return False
+    blob = "\n".join(hits)
+    return ("表1" in blob and "表2" in blob
+            and "出糙率" in blob and "水分含量" in blob)
+
+
+def _clarify_answer(question: str, must: list[str], cats: list[str]) -> dict:
+    """同一指标两张表、问题没说清物类 → 反问，不并列贴数、不替人挑一个。
+
+    四条原则写死的是「低置信度强制转人工」。做「表号→物类映射表」是给检索不准
+    打补丁，多一张表就多一处会错的地方；并列贴两个数则是把选择权硬塞回化验员，
+    却装作系统已经答了。都不做（DECISIONS_2026-11-10 §1）。
+    """
+    item = "、".join(dict.fromkeys(must))[:24] or "这个指标"
+    cat = f"（{cats[0]}）" if cats else ""
+    return {
+        "title": f"先确认物类，再给「{item}」{cat}的限值",
+        "lines": [
+            f"GB 1350 里「{item}」分两张表：表1 是早籼 / 中晚籼 / 籼糯稻谷，"
+            "表2 是粳稻谷、粳糯稻谷，两表限值不同。",
+            "你验的是籼稻还是粳稻？确认后我再给对应那一格。",
+            "现在不并列贴两个数，也不替你挑一个 —— 挑错版本就是「按新版判旧货」，"
+            "这恰恰是最不该由系统代做的判断。",
+        ],
+        "boundary": [b for b in [
+            "检索到的原文同时含表1与表2，属低置信度命中，按四条原则转人工确认",
+            _version_notice(),
+            "真实批次与实测值不进本系统",
+        ] if b],
+        # 给的是业务动作，不是「换个问法系统就能答」的空承诺：
+        # 表2 原文抽出的是缺指标标签的数字流，贴出去比不贴更危险。
+        "examples": ["先确认这批来料是籼稻还是粳稻",
+                     "查化验室手册里这批的品种与定等依据",
+                     "问班长当前执行的是 GB 1350 哪一版"],
+    }
 
 
 def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
@@ -286,15 +377,26 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
                 sources.append(name)
 
     if hits:
-        extra = []
-        if any(w in question for w in ("限值", "多少", "合格线", "几等")) and not any(
-                any(ch in h for ch in ("≥", "≤", ">=", "<=")) for h in hits):
-            extra.append("这次没检索到带限值的表行，上面只是相关说明，不能拿去判合格")
+        # 分不清籼粳就别给数：反问优先于贴一段「看着什么都答了」的整节原文。
+        if _mixed_quality_tables(question, hits):
+            return _clarify_answer(question, must, cats)
+        boundary = [f"出处：{', '.join(sources)}（corpus/ 只读，未生成结论）"]
+        if any("GB1350" in s or "GB 1350" in s for s in sources):
+            vn = _version_notice()
+            if vn:
+                boundary.append(vn)
+        # 旧版写「这次没检索到带限值的表行」，可同一张卡里贴的表明写 0.35。
+        # PDF 表是「—/0.35」列式、没有 ≥/≤，判据失效（夜测 11-10 r02 复发两晚）。
+        # 改成不否认表里有数，只说「没逐格核对、不能拿去判」。
+        if (any(w in question for w in ("限值", "多少", "合格线", "几等"))
+                and not any(any(ch in h for ch in ("≥", "≤", ">=", "<=")) for h in hits)):
+            boundary.append("上面片段里有数字，但没有可逐格核对的表行结构；"
+                            "未核对原文前不能拿去判合格")
+        boundary.append("以上为语料片段摘录，限值数字仍须人工核对原文后方可用于判定")
         return {
             "title": "查到的相关条款",
             "lines": hits,
-            "boundary": [f"出处：{', '.join(sources)}（corpus/ 只读，未生成结论）"] + extra +
-                        ["以上为语料片段摘录，限值数字仍须人工核对原文后方可用于判定"],
+            "boundary": boundary,
             "examples": ["整精米率和出糙率有什么区别",
                          "DEMO-001 这批稻谷出糙率 76.5 能收吗"],
         }
@@ -319,15 +421,34 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
             ],
             "examples": capability_answer()["examples"],
         }
+    # 纯符号 / 空泛输入：本来就不是业务问题，别拿「翻了语料库」这套话去接。
+    # 旧版「？？？」和「写 Python 爬虫」逐字同答，兜底模板接客面太宽
+    # （夜测 11-10 r02）。
+    if not re.search(r"[\u4e00-\u9fffA-Za-z0-9]", question):
+        return {
+            "title": "这句话我没读懂",
+            "lines": ["没识别出指标名、物类或批次号，所以没有去翻语料库，也不编一段给你。",
+                      "换成一句具体的：比如「稻谷水分限值是多少」或「DEMO-001 出糙率 76.5 能收吗」。"],
+            "boundary": ["真实批次与实测值不进本系统"],
+            "examples": capability_answer()["examples"],
+        }
+    # 拒答要点名「缺的是哪一条、哪个品类」，不能把「这个指标没入库」
+    # 说成「这段语料里没有定义性文字」，更不能给一个写死的「出糙率」示例
+    # —— 问水分的人按提示去问出糙率只会更糊涂（夜测 11-10 r02，4/4 分叉）。
+    cat = cats[0] if cats else ""
+    scope = f"已收录范围里没有{cat}的这套限值" if cat else "没能定位到你要查的指标或物类"
     return {
-        "title": "这个问法，语料里还没有能直接引用的段落",
+        "title": (f"库里没有能回答「{cat}」这个问法的段落" if cat
+                  else "这个问法，语料里还没有能直接引用的段落"),
         "lines": [
-            "我翻了 corpus/ 下的国标和方法笔记，没找到对应的定义性文字，"
-            "就不拿限值表格凑一段给你了。",
-            "可以换个更具体的问法：指出指标名（出糙率）、标准号（GB 1350）"
-            "或批次号（DEMO-001）。",
+            f"我把 corpus/ 下的国标和方法笔记翻了一遍：{scope}。"
+            "这是收录范围的问题，不是换个问法就能查到。",
+            "我不拿别的指标或别的品类的表行凑一段给你 —— 那比直接说没收录危险得多。",
+            "要补：把对应国标原文逐格核对后放进 corpus/，或问班长当前执行的是哪一版。",
         ],
-        "boundary": ["知识库支持在左栏上传文件；新资料先进待核对区，人工确认后才可用",
+        "boundary": ["已收录：GB 1350 稻谷质量要求、GB 2716/2761/2762 已核对条目、检验方法与术语",
+                     "未收录：大米 / 玉米 / 大豆 / 小麦的成品指标，GB 2762 尚未逐格核对的污染物限值",
+                     "知识库支持在左栏上传文件；新资料先进待核对区，人工确认后才可用",
                      "真实批次与实测值不进本系统"],
         "examples": capability_answer()["examples"],
     }
@@ -370,11 +491,11 @@ def route(question: str) -> dict | None:
     if any(k in q for k in _CAPABILITY):
         return {"kind": "chat", "answer": capability_answer()}
 
-    if any(k in q for k in _OUT_OF_SCOPE):
+    if any(k in q for k in _OUT_OF_SCOPE) or _OUT_OF_SCOPE_RE.search(q):
         return {"kind": "chat", "answer": {
             "title": "这不在我的业务范围内",
             "lines": ["我是粮油原粮验收的判定型助手，只处理检验指标、标准条款、"
-                      "录入自查和 DEMO 批次判定，不做闲聊、创作或通用问答。",
+                      "录入自查和 DEMO 批次判定，不做闲聊、创作、写代码或通用问答。",
                       "这不是「拒答」——是我本来就不覆盖这类任务。"],
             "boundary": ["想看我能做什么，直接问「你能干什么」"],
             "examples": capability_answer()["examples"]}}

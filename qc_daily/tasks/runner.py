@@ -27,7 +27,8 @@ from .report import BLOCKS, write_report
 from .request import RequestError, TaskRequest
 
 
-def diagnose_missing_dates(dates: list, no_rows: bool) -> tuple[str, str, str]:
+def diagnose_missing_dates(dates: list, no_rows: bool, skipped: int = 0,
+                           total: int = 0) -> tuple[str, str, str]:
     """「一条检验日期都没读出来」时该怎么说话。
 
     返回 (给人看的错因, 下一步, trace code)。
@@ -35,7 +36,22 @@ def diagnose_missing_dates(dates: list, no_rows: bool) -> tuple[str, str, str]:
     以前这里直接走"日期不匹配"分支，把四种完全不同的输入错误（空表 / 只有表头 /
     日期列是公式没存结果 / 实测值整列读不懂）说成同一句话，还叫人去改根本没坏的
     日期列——照着改会把真实记录改坏（夜测 2026-11-09 S3 / G4）。
+
+    更晚一层：导入层已经数清「共几行、跳过几行」，手里有确定数字就不该再给
+    「可能是空表」这种三选一猜测（夜测 11-10 r05：单行表上卡说没读出来、
+    下卡说其余行照跑）。skipped/total 由 importer 的结构化 stats 传入。
     """
+    if no_rows and skipped and total and skipped >= total:
+        return (f"表里读到 {total} 行数据，但 {skipped} 行的实测值读不懂"
+                "（「＜0.5」「未检出」「—」这类写法），一行都没进判定，本次没跑。",
+                "下一步：把下方提醒里点名的那几行实测值改成数字后重传；"
+                "日期列本身没问题，不要改日期。",
+                "values_unreadable")
+    if no_rows and skipped:
+        return (f"表里读到 {total} 行数据，其中 {skipped} 行的实测值读不懂；"
+                "其余行也没能形成可判定记录，本次没跑。",
+                "下一步：按下方提醒逐行核对实测值写法；日期列本身没问题。",
+                "values_unreadable")
     if no_rows:
         return ("这张表一行可判定的记录都没读出来（可能是空表、只有表头，"
                 "或者「实测值」整列都读不懂）。没有可判定的记录，本次没跑。",
@@ -240,7 +256,10 @@ class TaskRunner:
         # （夜测 2026-11-09 S3 / G4：改日期照提示做，反而把真实记录改坏）。
         if not summary["dates"]:
             res.status = "failed"
-            msg, nxt, code = diagnose_missing_dates(summary["dates"], no_rows)
+            msg, nxt, code = diagnose_missing_dates(
+                summary["dates"], no_rows,
+                skipped=int(summary.get("skipped_rows") or 0),
+                total=int(summary.get("data_rows") or 0))
             res.errors.append(msg)
             res.notes.append(nxt)
             self._trace(res, "failed", code,
@@ -364,7 +383,9 @@ class TaskRunner:
                     f"只改 dsn → {cfg.raw['source']['sql']['dsn']}")
         agent = QCDailyAgent(cfg)
         # 把导入层的「哪几行没进判定」带进日报正文，让看报告的人也知道少了什么
-        agent.import_notes = list(ctx.get("notes") or [])
+        # 【版本】是声明，不是「哪一行没进判定」，别混进日报那一节。
+        agent.import_notes = [n for n in (ctx.get("notes") or [])
+                              if "【版本】" not in str(n)]
         self._state(res, "analyzing", "调 QCDailyAgent.run（八步流水线原样）")
         result = agent.run(report_date=date.fromisoformat(req.report_date),
                            push=False, formats=req.formats,

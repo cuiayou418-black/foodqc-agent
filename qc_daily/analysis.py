@@ -58,9 +58,20 @@ class HistoryStore:
         return entries
 
     def last_days(self, n: int) -> list:
-        """最近 n 条记录（按日期升序）。"""
-        entries = self.read_all()
-        return entries[-n:] if n > 0 else []
+        """最近 n 个**日期**（不是 n 条记录），按日期升序、同日只留最后一次。
+
+        旧版 entries[-n:] 按条数截：同一天重跑 6 次，取到的 7 条里全是今天，
+        前几天真实业务数据被挤出去，趋势塌成一个点、看不出下滑（夜测 11-10 r04）。
+        夜测产物写进 history.jsonl 时这个坑尤其明显。
+        """
+        if n <= 0:
+            return []
+        by_date: dict[str, dict] = {}
+        for e in self.read_all():
+            d = str(e.get("report_date") or "").strip()
+            if d:
+                by_date[d] = e
+        return [by_date[d] for d in sorted(by_date)[-n:]]
 
 
 # ------------------------------------------------------------------ 指标计算
@@ -201,7 +212,10 @@ def compute_metrics(collected: CollectedData, config: QCDailyConfig,
         "item_fail": {it.item: it.fail for it in m.items},
         "item_mean": _item_means(collected),
     }
-    series = hist_entries + [today_entry]
+    # 当日无条件追加在末尾时，补录/回溯日期（化验室常态）会排在最新日之后，
+    # 网页趋势错序、Excel 导出却是对的（exporters.py 用了 sorted）——两处口径不一致。
+    series = sorted(hist_entries + [today_entry],
+                    key=lambda e: str(e.get("report_date", "")))
     m.trend_points = [TrendPoint(date=e["report_date"], pass_rate=e.get("pass_rate", 0.0),
                                  total=e.get("total_tests", 0), fail=e.get("fail_tests", 0),
                                  abnormal_batches=e.get("abnormal_batch_count", 0))

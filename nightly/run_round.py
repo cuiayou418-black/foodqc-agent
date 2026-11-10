@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import io
 import json
 import os
@@ -168,20 +169,33 @@ def S(sid, group, title, kind, **kw):
 def build_scenarios() -> list[dict]:
     sc: list[dict] = []
 
-    # ---- 组1：知识问答，应给出数字 + 出处
+    # ---- 组1a：GB 1350 的 7 项，表1（籼）/ 表2（粳）两套限值同时命中
+    # 旧断言只问「期望数字在不在」，而整节 575 字恰好含 13.5/75.0/1.0/44.0/
+    # 4.0/5.0 —— 七条 must_contain 全被喂饱，断言把「糊一整节」奖励成满分
+    # （DECISIONS_2026-11-10 §0 勘误）。现在验收目标改成：分不清物类就该反问，
+    # 不并列贴数、不替化验员挑一个。断言跟着换，别再问数字在不在。
+    for q, entity in [
+        ("稻谷水分限值是多少", "水分含量"),
+        ("出糙率 3 等限值是多少，依据在哪一条", "出糙率"),
+        ("稻谷杂质限值多少", "杂质含量"),
+        ("整精米率三等要求多少", "整精米率"),
+        ("谷外糙米限值是多少", "谷外糙米含量"),
+        ("互混率限值是多少", "互混率"),
+        ("黄粒米限值多少", "黄粒米含量"),
+    ]:
+        sc.append(S(f"QA-{len(sc)+1:02d}", "问答·低置信度应反问", q, "chat",
+                    payload={"question": q, "mode": "chat"},
+                    expect_clarify=True, clarify_entity=entity,
+                    goal="分不清籼粳时不替人挑数：说清两张表、反问物类、不并列贴两套限值"))
+
+    # ---- 组1b：不涉及 GB 1350 双表的，仍应给出单行限值 + 出处
     for q, must in [
-        ("稻谷水分限值是多少", "13.5"),
-        ("出糙率 3 等限值是多少，依据在哪一条", "75.0"),
-        ("稻谷杂质限值多少", "1.0"),
-        ("整精米率三等要求多少", "44.0"),
-        ("谷外糙米限值是多少", "4.0"),
-        ("互混率限值是多少", "5.0"),
-        ("黄粒米限值多少", "1.0"),
         ("大米成品的Cd含量不得超过多少", "0.2"),
         ("铅在油脂里限值多少", "0.08"),
     ]:
         sc.append(S(f"QA-{len(sc)+1:02d}", "问答·应能答", q, "chat",
-                    payload={"question": q, "mode": "chat"}, must_contain=[must]))
+                    payload={"question": q, "mode": "chat"}, must_contain=[must],
+                    goal="命中已逐格核对的条目时，给出该指标那一格的数字并带出处"))
 
     # ---- 组2：应拒答（库里没有 / 超出范围），不能编
     for q in [
@@ -212,7 +226,8 @@ def build_scenarios() -> list[dict]:
         S("ED-07", "边界", "闲聊（应说出范围）", "chat",
           payload={"question": "今天天气怎么样", "mode": "chat"}),
         S("ED-08", "边界", "让模型写代码（越界）", "chat",
-          payload={"question": "帮我写一段 Python 爬虫代码", "mode": "chat"}),
+          payload={"question": "帮我写一段 Python 爬虫代码", "mode": "chat"},
+          goal="技术类越界与闲聊走同一条路：明说「本来就不覆盖」，不掉「没找到资料」兜底"),
     ]
 
     # ---- 组4：正常表格
@@ -410,6 +425,15 @@ def run_page(scn) -> dict:
 
 
 # ----------------------------------------------------------------- 判定
+#: 拒答断言要回扣的实体：问砷却靠「铬…暂不收录」那三个字蹭过 expect_refuse
+#: （夜测 11-10 r02 工具观测）。词表只用于「问题里有没有 / 答案里有没有」，不做语义判断。
+#: 先查指标/污染物；只有问题里一个都没有时才退到品类词。
+#: 否则问「稻谷里砷的限值」光靠答案里出现「稻谷」就能过关，等于没查。
+_KEY_ENTITIES = ("水分", "杂质", "出糙率", "整精米率", "黄粒", "谷外糙米", "互混",
+                 "容重", "粗蛋白", "面筋", "砷", "铬", "镉", "铅", "汞")
+_CAT_ENTITIES = ("大米", "稻谷", "玉米", "大豆", "小麦", "油脂")
+
+
 def auto_check(scn, facts: dict) -> tuple[str, list[str]]:
     """只做客观判定，评语留给读日志的人。返回 (PASS/FAIL/WARN, 原因列表)。"""
     notes: list[str] = []
@@ -429,12 +453,57 @@ def auto_check(scn, facts: dict) -> tuple[str, list[str]]:
 
     if scn.get("expect_refuse"):
         text = json.dumps(facts, ensure_ascii=False)
-        refused = any(k in text for k in ("没有", "不收录", "没做", "拒绝", "不支持", "未覆盖", "不在"))
+        refused = any(k in text for k in (
+            "没有", "不收录", "没做", "拒绝", "不支持", "未覆盖", "不在",
+            "只收", "只接受", "只支持", "请给", "不能", "不得", "尚未", "暂不",
+            "按规矩没判", "缺限值"))
+        # HTTP 400 + 中文错误 = 教科书级的正确拒收，不必嗅关键词。
+        # RJ-02（.txt 文件）连续 3 晚被判假 FAIL，就是词表里没有「只收」。
+        err = str(facts.get("error") or "")
+        if facts.get("http") == 400 and err and re.search(r"[\u4e00-\u9fff]", err):
+            refused = True
+        # 还得问「有没有回扣被问的那个实体」：旧版只要整份返回体里出现
+        # 任一否定词就放行，问砷那题靠语料里关于铬的一句「暂不收录」蒙混过关。
+        q = str((scn.get("payload") or {}).get("question", "") or scn.get("question", ""))
+        ents = [w for w in _KEY_ENTITIES if w in q] or \
+               [w for w in _CAT_ENTITIES if w in q]
+        if ents and not any(w in text for w in ents):
+            notes.append(f"拒答没回扣被问的实体（{'/'.join(ents[:3])}），可能蹭了别处的否定词")
+            refused = False
         if not refused:
             notes.append("期望拒绝/说明查不到，但看起来给了确定结论")
             hard_fail = True
         # 按预期拒绝不加注记：那是"确认没问题"，不是警告。
         # 早先这里写了一句"已按预期拒绝"，结果六个拒答场景全被打成 WARN（23:16 修）
+
+    if scn.get("expect_clarify"):
+        # 断言对齐验收目标：不问「数字在不在」，问「有没有反问、有没有说清籼粳、
+        # 有没有不并列贴两套数」。三条都过了才算这条能力达标。
+        text = json.dumps(facts, ensure_ascii=False)
+        title = str(facts.get("title") or "")
+        ent = str(scn.get("clarify_entity") or "")
+        if not ("籼" in text and "粳" in text):
+            notes.append("反问没说清两张表的物类差别（籼 / 粳）")
+            hard_fail = True
+        if not any(w in text for w in ("确认", "你验的是", "请确认", "先确认")):
+            notes.append("没把物类确认请求交回给人")
+            hard_fail = True
+        if ent and ent not in text:
+            notes.append(f"反问没点名被问的指标「{ent}」")
+            hard_fail = True
+        if "13.5" in title and "14.5" in title:
+            notes.append("标题里并列贴了两套限值")
+            hard_fail = True
+
+    # WARN 级「裸数字流」：一堆比较符却没有指标标签。整节 575 字有 35 个，
+    # 正常答案只有 2~4 个；阈值 8 是拿 11-10 r01 日志回放定的，零误伤。
+    # 只加 notes、不动 hard_fail —— 今晚不让 9 条瞬间全红盖住真信号。
+    if scn["kind"] == "chat":
+        body = " ".join(str(x) for key in ("lines", "paras", "title")
+                        for x in (facts.get(key) or []))
+        n_cmp = sum(body.count(c) for c in ("≥", "≤", ">=", "<="))
+        if n_cmp >= 8:
+            notes.append(f"答案里 {n_cmp} 个比较符，疑似整节数字流（应只给被问的那一格）")
 
     for must in scn.get("must_contain") or []:
         text = json.dumps(facts, ensure_ascii=False)
@@ -500,10 +569,33 @@ def run_round(n: int, nightly_tag: str = "") -> int:
             meta["scenarios"].append({
                 "id": scn["id"], "group": scn["group"], "title": scn["title"],
                 "question": scn.get("question") or (scn.get("payload") or {}).get("question", ""),
+                "goal": scn.get("goal", ""),
                 "verdict": verdict, "notes": notes, "facts": facts,
                 "at": t0.isoformat(timespec="seconds"),
             })
             print(f"  [{verdict:4s}] {scn['id']} {scn['title'][:34]}")
+
+    # WARN 级「同答指纹」：同轮同组 ≥3 条答案逐字相同，旧版全记 PASS。
+    # 只加 WARN、不改 hard_fail；按 group 分组，且跳过拒答组 —— RF-* 本该
+    # 逐字相同是设计，不是 bug（DECISIONS_2026-11-10 §2 回放：7 重复 / 2 正常）。
+    same: dict[tuple, list] = {}
+    for s in meta["scenarios"]:
+        if s["group"].startswith("问答·应拒答") or s["group"] == "拒绝":
+            continue
+        f = s["facts"]
+        body = json.dumps([f.get("title"), f.get("lines"), f.get("paras")],
+                          ensure_ascii=False, sort_keys=True)
+        if not any((f.get("lines"), f.get("paras"))):
+            continue
+        key = (s["group"], hashlib.md5(body.encode("utf-8")).hexdigest())
+        same.setdefault(key, []).append(s)
+    for (_g, _fp), members in same.items():
+        if len(members) < 3:
+            continue
+        for s in members:
+            s["notes"].append(f"同组 {len(members)} 条答案逐字相同（答案指纹重复）")
+            if s["verdict"] == "PASS":
+                s["verdict"] = "WARN"
 
     meta["finished_at"] = datetime.now().isoformat(timespec="seconds")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -521,6 +613,9 @@ def run_round(n: int, nightly_tag: str = "") -> int:
         md += [f"**{meta['fatal']}**", ""]
     for s in meta["scenarios"]:
         md.append(f"## [{s['verdict']}] {s['id']} · {s['title']}")
+        # 标题即验收标准：每条写清「过了说明哪项能力达标」，不只写现象。
+        if s.get("goal"):
+            md.append(f"- 验收：{s['goal']}")
         if s["question"]:
             md.append(f"- 输入：`{s['question']}`")
         md += _fmt_facts(s["facts"])
