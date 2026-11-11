@@ -6,7 +6,7 @@ test_judge.py —— Day15 回归测试（脚手架，我搭的，跑它就完�
          = GB 1350-2025《稻谷》表 1 质量要求原文
 
 跑法（每次新开终端都要先激活环境）：
-    cd C:/Users/1/foodqc-agent
+    cd <项目根目录>
     . .venv/Scripts/activate
     python test_judge.py
 

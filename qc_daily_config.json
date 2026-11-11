@@ -9,13 +9,13 @@
   "standard_versions": {
     "GB 1350—2009": {
       "role": "active",
-      "note": "当前（2026 年）执行版；2026-11-11 对原文扫描件逐格核对入库，经小崔复核确认；GB 1350—2025 明示 2027-01-01 才实施",
+      "note": "当前（2026 年）执行版；2026-11-11 对原文扫描件逐格核对入库，经人工复核确认；GB 1350—2025 明示 2027-01-01 才实施",
       "limits_verified": true,
       "limits": {
         "source": "corpus/limits.json → GB1350-2009 → 表格 → 表1/表2 → 质量要求",
         "verified_at": "2026-11-11",
-        "verified_by": "崔旺成（复核签字）",
-        "evidence": "D:/桌面/国标/GB1350-2009.pdf 第 5 页 180dpi 渲染逐格比对；留痕 nightly/_gb1350_2009_pages/page-05_tables.png"
+        "verified_by": "人工复核（签字原件留存在本地，不入库）",
+        "evidence": "GB 1350—2009 原文第 5 页 180dpi 渲染逐格比对；放大图与签字留存在本地，不入库"
       },
       "limits_status": "verified"
     },
