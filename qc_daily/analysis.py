@@ -112,7 +112,10 @@ def compute_metrics(collected: CollectedData, config: QCDailyConfig,
         if r.verdict == "不合格":
             it.fail += 1
             it.fail_batches.append(r.batch_id)
-        if r.ratio >= near_ratio:
+        # 与 templates.py:118 的「接近限值」同口径：只数未超标项（利用率 ≥ 阈值 且 < 1）。
+        # 旧写法 r.ratio >= near_ratio 把超标项也算进来，同一份日报正文写 5、预警写 7
+        # （夜测 2026-11-11 r03）。本文件 :178 的异常批次统计本来就用的这个口径。
+        if near_ratio <= r.ratio < 1.0:
             m.near_limit_count += 1
 
     for batch_id, pr in prod_by_batch.items():
@@ -275,8 +278,16 @@ def _trend_summary(points: list[TrendPoint]) -> dict:
         direction = "环比走强"
     else:
         direction = "基本平稳"
+    # wow 是「两个比例相减」＝百分点差，不是百分比。旧文案 f"{wow:+.2%}" 把
+    # 0.2321 印成「+23.21%」（实为 23.21 个百分点，真实环比 +37.1%），
+    # 还把「总体持续下滑」挂在「涨了」后面自相矛盾（夜测 2026-11-11 r03 一般②）。
+    prev = rates[-2]
+    if prev:
+        change = f"较昨日 {wow / prev:+.1%}（{wow * 100:+.2f} 个百分点）"
+    else:
+        change = f"较昨日 {wow * 100:+.2f} 个百分点（昨日为 0，百分比无从算起）"
     return {"direction": direction, "slope": round(slope, 4), "wow_delta": round(wow, 4),
-            "comment": f"近 {n} 日合格率斜率 {slope:+.4f}/天，环比 {wow:+.2%}，总体{direction}"}
+            "comment": f"近 {n} 日合格率斜率 {slope:+.4f}/天（{direction}）；{change}"}
 
 
 # ------------------------------------------------------------------ 预警评估

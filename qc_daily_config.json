@@ -9,21 +9,25 @@
   "standard_versions": {
     "GB 1350—2009": {
       "role": "active",
-      "note": "当前（2026 年）执行版；corpus/limits.json 的 GB 1350—2025 明示 2027-01-01 才实施",
-      "limits_verified": false,
-      "limits": null,
-      "limits_status": "pending_manual_verification",
-      "release_allowed": false
+      "note": "当前（2026 年）执行版；2026-11-11 对原文扫描件逐格核对入库，经小崔复核确认；GB 1350—2025 明示 2027-01-01 才实施",
+      "limits_verified": true,
+      "limits": {
+        "source": "corpus/limits.json → GB1350-2009 → 表格 → 表1/表2 → 质量要求",
+        "verified_at": "2026-11-11",
+        "verified_by": "崔旺成（复核签字）",
+        "evidence": "D:/桌面/国标/GB1350-2009.pdf 第 5 页 180dpi 渲染逐格比对；留痕 nightly/_gb1350_2009_pages/page-05_tables.png"
+      },
+      "limits_status": "verified"
     },
     "GB 1350—2025": {
       "role": "preset",
       "effective_date": "2027-01-01",
       "limits_source": "corpus/limits.json → GB1350-2025 → 表格 → 表1/表2 → 质量要求",
       "enabled": false,
-      "note": "预置，未到实施日期；products 中的数值仅为其可追溯副本，不得作为当前放行依据"
+      "note": "预置，未到实施日期；2026-11-11 切版后 products 已改为 GB 1350—2009 的数值，本条仅供 2027 换版与历史追溯，不得用于判 2026 年的货"
     }
   },
-  "standard_warning": "⚠️ 当前按 GB 1350—2009 判定，2009 版限值待人工核对；未核对前所有判定结论仅供复核，不得作为放行依据",
+  "standard_warning": "版本口径：当前执行 GB 1350—2009（限值已逐格核对）；GB 1350—2025 为 2027-01-01 才实施的预置版，不得用于判本版货物。结论仍须人工复核后签字。",
   "source": {
     "type": "sql",
     "simulated": {
@@ -54,38 +58,38 @@
   "products": {
     "籼稻谷": {
       "table": "表1",
-      "scope": ["早籼稻谷", "中晚籼稻谷", "籼糯稻谷"],
+      "scope": ["早籼稻谷", "晚籼稻谷", "籼糯稻谷"],
       "grade": "3",
-      "limits_basis": "GB 1350—2025 预置（corpus/limits.json → GB1350-2025 → 表格 → 表1/表2 → 质量要求），enabled=false；当前执行版以 standard_version 为准，限值待人工核对",
+      "limits_basis": "GB 1350—2009 当前执行版（corpus/limits.json → GB1350-2009 → 表格 → 表1/表2 → 质量要求），限值已逐格核对并经人工复核",
       "items": {
-        "出糙率":       {"unit": "%", "direction": "≥", "limit": 75.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 第3等 原文第5页", "kind": "graded_lower", "expr": "≥75.0", "is_grading_item": true},
-        "整精米率":     {"unit": "%", "direction": "≥", "limit": 44.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 第3等 原文第5页", "kind": "graded_lower", "expr": "≥44.0", "is_grading_item": false},
-        "杂质含量":     {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·杂质含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
-        "水分含量":     {"unit": "%", "direction": "≤", "limit": 13.5, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·水分含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤13.5", "is_grading_item": false},
-        "黄粒米含量":   {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·黄粒米含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
-        "谷外糙米含量": {"unit": "%", "direction": "≤", "limit": 4.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·谷外糙米含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤4.0", "is_grading_item": false},
-        "互混率":       {"unit": "%", "direction": "≤", "limit": 5.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·互混率 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤5.0", "is_grading_item": false}
+        "出糙率":       {"unit": "%", "direction": "≥", "limit": 75.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表1 第3等 原文第5页", "kind": "graded_lower", "expr": "≥75.0", "is_grading_item": true},
+        "整精米率":     {"unit": "%", "direction": "≥", "limit": 44.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表1 第3等 原文第5页", "kind": "graded_lower", "expr": "≥44.0", "is_grading_item": false},
+        "杂质含量":     {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表1 质量要求·杂质含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
+        "水分含量":     {"unit": "%", "direction": "≤", "limit": 13.5, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表1 质量要求·水分含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤13.5", "is_grading_item": false},
+        "黄粒米含量":   {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表1 质量要求·黄粒米含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
+        "谷外糙米含量": {"unit": "%", "direction": "≤", "limit": 2.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表1 质量要求·谷外糙米含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤2.0", "is_grading_item": false},
+        "互混率":       {"unit": "%", "direction": "≤", "limit": 5.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表1 质量要求·互混率 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤5.0", "is_grading_item": false}
       },
       "manual_checks": [
-        {"item": "色泽、气味", "unit": "", "direction": null, "limit": null, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表1 质量要求·色泽、气味 原文第5页（各等级同值）", "requirement": "正常", "note": "人工确认项：感官型指标，不参与数值判定"}
+        {"item": "色泽、气味", "unit": "", "direction": null, "limit": null, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表1 质量要求·色泽、气味 原文第5页（各等级同值）", "requirement": "正常", "note": "人工确认项：感官型指标，不参与数值判定"}
       ]
     },
     "粳稻谷": {
       "table": "表2",
       "scope": ["粳稻谷", "粳糯稻谷"],
       "grade": "3",
-      "limits_basis": "GB 1350—2025 预置（corpus/limits.json → GB1350-2025 → 表格 → 表1/表2 → 质量要求），enabled=false；当前执行版以 standard_version 为准，限值待人工核对",
+      "limits_basis": "GB 1350—2009 当前执行版（corpus/limits.json → GB1350-2009 → 表格 → 表1/表2 → 质量要求），限值已逐格核对并经人工复核",
       "items": {
-        "出糙率":       {"unit": "%", "direction": "≥", "limit": 77.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 第3等 原文第5页+第6页", "kind": "graded_lower", "expr": "≥77.0", "is_grading_item": true},
-        "整精米率":     {"unit": "%", "direction": "≥", "limit": 55.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 第3等 原文第5页+第6页", "kind": "graded_lower", "expr": "≥55.0", "is_grading_item": false},
-        "杂质含量":     {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·杂质含量 原文第5页+第6页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
-        "水分含量":     {"unit": "%", "direction": "≤", "limit": 14.5, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·水分含量 原文第5页+第6页（各等级同值）", "kind": "fixed_upper", "expr": "≤14.5", "is_grading_item": false},
-        "黄粒米含量":   {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·黄粒米含量 原文第5页+第6页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
-        "谷外糙米含量": {"unit": "%", "direction": "≤", "limit": 4.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·谷外糙米含量 原文第5页+第6页（各等级同值）", "kind": "fixed_upper", "expr": "≤4.0", "is_grading_item": false},
-        "互混率":       {"unit": "%", "direction": "≤", "limit": 5.0, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·互混率 原文第5页+第6页（各等级同值）", "kind": "fixed_upper", "expr": "≤5.0", "is_grading_item": false}
+        "出糙率":       {"unit": "%", "direction": "≥", "limit": 77.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表2 第3等 原文第5页", "kind": "graded_lower", "expr": "≥77.0", "is_grading_item": true},
+        "整精米率":     {"unit": "%", "direction": "≥", "limit": 55.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表2 第3等 原文第5页", "kind": "graded_lower", "expr": "≥55.0", "is_grading_item": false},
+        "杂质含量":     {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表2 质量要求·杂质含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
+        "水分含量":     {"unit": "%", "direction": "≤", "limit": 14.5, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表2 质量要求·水分含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤14.5", "is_grading_item": false},
+        "黄粒米含量":   {"unit": "%", "direction": "≤", "limit": 1.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表2 质量要求·黄粒米含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤1.0", "is_grading_item": false},
+        "谷外糙米含量": {"unit": "%", "direction": "≤", "limit": 2.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表2 质量要求·谷外糙米含量 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤2.0", "is_grading_item": false},
+        "互混率":       {"unit": "%", "direction": "≤", "limit": 5.0, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表2 质量要求·互混率 原文第5页（各等级同值）", "kind": "fixed_upper", "expr": "≤5.0", "is_grading_item": false}
       },
       "manual_checks": [
-        {"item": "色泽、气味", "unit": "", "direction": null, "limit": null, "standard": "GB 1350—2025", "limit_source": "GB 1350—2025 表2 质量要求·色泽、气味 原文第5页+第6页（各等级同值）", "requirement": "正常", "note": "人工确认项：感官型指标，不参与数值判定"}
+        {"item": "色泽、气味", "unit": "", "direction": null, "limit": null, "standard": "GB 1350—2009", "limit_source": "GB 1350—2009 表2 质量要求·色泽、气味 原文第5页（各等级同值）", "requirement": "正常", "note": "人工确认项：感官型指标，不参与数值判定"}
       ]
     }
   },

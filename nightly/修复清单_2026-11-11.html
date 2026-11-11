@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>2026-11-11 巡检修复清单 · FoodQC-Agent</title>
+<style>
+  :root{
+    --bg:#fafaf9; --card:#ffffff; --ink:#1c1917; --muted:#78716c;
+    --line:#e7e5e4; --green:#15803d; --amber:#b45309; --red:#b91c1c; --blue:#1d4ed8;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);
+       font-family:-apple-system,"Segoe UI","Microsoft YaHei",sans-serif;
+       line-height:1.7;font-size:15px}
+  .wrap{max-width:1060px;margin:0 auto;padding:36px 24px 64px}
+  header{border-bottom:2px solid var(--ink);padding-bottom:18px;margin-bottom:24px}
+  h1{font-size:27px;margin:0 0 6px;letter-spacing:.5px}
+  .sub{color:var(--muted);font-size:14px;margin:0}
+  .stats{display:flex;flex-wrap:wrap;gap:10px;margin:20px 0 30px}
+  .stat{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:12px 18px;min-width:132px;flex:1}
+  .stat b{display:block;font-size:24px;line-height:1.2;color:var(--blue)}
+  .stat span{font-size:12px;color:var(--muted)}
+  h2{font-size:19px;margin:34px 0 12px;padding-left:11px;border-left:4px solid var(--ink)}
+  h2 small{font-weight:400;color:var(--muted);font-size:13px;margin-left:8px}
+  table{width:100%;border-collapse:collapse;background:var(--card);
+        border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:14px}
+  th{background:#f5f5f4;text-align:left;padding:11px 12px;font-size:13px;
+     color:var(--muted);font-weight:600;border-bottom:1px solid var(--line)}
+  td{padding:11px 12px;border-bottom:1px solid #f0efee;vertical-align:top}
+  tr:last-child td{border-bottom:none}
+  code{background:#f5f5f4;padding:1px 5px;border-radius:4px;font-size:12.5px;
+       font-family:Consolas,"Courier New",monospace;color:#374151}
+  .tag{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11.5px;
+       font-weight:600;white-space:nowrap}
+  .t-yb{background:#fef3c7;color:#92400e}
+  .t-qw{background:#e0f2fe;color:#075985}
+  .t-yz{background:#fee2e2;color:#991b1b}
+  .ok{color:var(--green);font-weight:600}
+  .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(310px,1fr));gap:12px}
+  .c{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--amber);
+     border-radius:8px;padding:14px 16px}
+  .c .h{font-weight:600;margin-bottom:5px;font-size:14.5px}
+  .c p{margin:0;font-size:13.5px;color:#44403c}
+  .c .why{color:var(--amber);font-size:12.5px;margin-top:7px}
+  .c.done{border-left-color:var(--green);background:#f0fdf4}
+  .c.done .why{color:var(--green)}
+  ul.verify{background:var(--card);border:1px solid var(--line);border-radius:10px;
+           padding:16px 16px 16px 34px;margin:0}
+  ul.verify li{margin:5px 0;font-size:14px}
+  .note{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;
+        padding:14px 18px;font-size:14px;margin-top:14px}
+  .warnbox{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;
+           padding:14px 18px;font-size:14px;margin-top:22px}
+  .warnbox b{color:var(--amber)}
+  footer{margin-top:38px;padding-top:16px;border-top:1px solid var(--line);
+         color:var(--muted);font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<header>
+  <h1>2026-11-11 巡检修复清单</h1>
+  <p class="sub">FoodQC-Agent · 白天修复轮（12:30 起）· 只改无争议的实现错误，需要业务拍板的一律没动</p>
+</header>
+
+<div class="stats">
+  <div class="stat"><b>5 轮</b><span>今晚巡检（r01–r05，缺 r06 汇总）</span></div>
+  <div class="stat"><b>21 项</b><span>已处理：13 修复 + 8 拍板</span></div>
+  <div class="stat"><b>10 个</b><span>改动文件（产品 / 测试 / 探针 / 配置 / 语料）</span></div>
+  <div class="stat"><b>160/160</b><span>回归测试全绿</span></div>
+  <div class="stat"><b>0 条</b><span>待拍板（8 条已全部给决定）</span></div>
+</div>
+
+<h2>一、已修 <small>每条都能追到台账轮次与场景 ID</small></h2>
+<table>
+<thead><tr><th style="width:88px">轮次 / 级别</th><th style="width:27%">现象</th><th style="width:22%">文件</th><th>改法与验法</th></tr></thead>
+<tbody>
+<tr><td><span class="tag t-yb">r03 一般</span></td>
+    <td>同一份日报「接近限值」正文写 <b>5</b> 项次、预警与 Excel 写 <b>7</b> 项次</td>
+    <td><code>analysis.py:115</code></td>
+    <td>两套口径合一：<code>r.ratio &gt;= near_ratio</code> 改成 <code>near_ratio &lt;= r.ratio &lt; 1.0</code>（与 <code>templates.py:118</code>、本文件 <code>:178</code> 一致），超标项不再算「接近」。<br><span class="ok">验：7 条模拟记录（5 近 + 2 超）实跑，near_limit_count=5</span></td></tr>
+
+<tr><td><span class="tag t-yb">r03 一般</span></td>
+    <td>趋势摘要把 23.21 <b>个百分点</b> 印成「环比 +23.21%」，同句还挂「总体持续下滑」，前半涨后半跌</td>
+    <td><code>analysis.py:278</code></td>
+    <td>真环比改按 <code>wow / rates[-2]</code> 算，百分点单独标注；斜率判断与单日涨跌拆成两句。<br><span class="ok">验：0.6250→0.8571 实跑得「较昨日 +37.1%（+23.21 个百分点）」</span></td></tr>
+
+<tr><td><span class="tag t-yb">r04 一般</span></td>
+    <td>同一条 critical 告警，服务没重启看得到、重启后消失；丢的正是「哪一批、哪几项重复」</td>
+    <td><code>task_web.py:_status</code></td>
+    <td>磁盘重建分支补一行 <code>"alerts": res.alerts</code>。<code>runner.py:448</code> 早就把数据存好了，只是取的时候漏拿。<br><span class="ok">验：mock 重启后的 get_run，返回的 dict 带 critical 告警</span></td></tr>
+
+<tr><td><span class="tag t-yb">r05 一般</span></td>
+    <td>同一屏里一句说「限值已逐格核对并经人工复核」，另 5 句说「还没人工核对过」——系统自己拆自己的台</td>
+    <td><code>client_ui.py</code> ×3<br><code>tasks/runner.py</code> ×2</td>
+    <td>5 处统一为「限值已逐格人工核对并经复核」；<code>runner.py:284</code> 那句过时的「宽表不会拿 2025 版补齐」也删了（切版后已经会补 2009 限值）。<br><span class="ok">验：全库 grep「还没人工核对」零命中；回归测试 160/160</span></td></tr>
+
+<tr><td><span class="tag t-yb">r05 一般</span></td>
+    <td>0 字节文件与「只有表头」的 CSV，两张失败卡逐字相同，都给「可能是空表…」三选一</td>
+    <td><code>importer.py</code><br><code>tasks/runner.py</code></td>
+    <td>导入层对「无 sheet」「sheet 无记录」都写一条带文件字节数的 note；上层据此分诊。<b>定点验证时抓到一个隐藏坑</b>：0 字节文件 <code>read_tabular</code> 直接返回空列表，压根不进 sheet 循环，已补在循环外。<br><span class="ok">验：两种输入实跑，结论分别为「只有标题行」/「这个文件是空的」，不再相同</span></td></tr>
+
+<tr><td><span class="tag t-qw">r04 轻微</span></td>
+    <td>headline 说「另有 2 条提醒」，卡片却列 7 行，数不上</td>
+    <td><code>task_web.py:_headline</code></td>
+    <td>那个 2 只数「待人工复核」里的说明行，不含 section_notes / metrics.alerts。改成「另有提醒，详见下方」，不报对不上的数。</td></tr>
+
+<tr><td><span class="tag t-qw">r03 轻微</span></td>
+    <td>录入自查 0 条疑点，却写「命中 0 条疑点，全部标『待人工确认』」</td>
+    <td><code>tasks/runner.py</code></td>
+    <td>按有无疑点分流；0 条时改说「读了 N 行，未命中疑点（五项都查过）；这不等于数据都对」，顺带补上一直缺的数据对账行。</td></tr>
+
+<tr><td><span class="tag t-qw">r05 轻微</span></td>
+    <td>只有 1 个文件、且它就坏了，提示却说「其余可读文件已保留」</td>
+    <td><code>tasks/runner.py:240</code></td>
+    <td>用导入汇总判断：单文件全失败时换「这个文件没能读入…重新上传」；多文件仍用原话。</td></tr>
+
+<tr><td><span class="tag t-qw">r05 轻微</span></td>
+    <td>非 DEMO 批次被拒只报个数，不说是哪几个批次号</td>
+    <td><code>tasks/runner.py:_demo_only</code></td>
+    <td>批次号去重后点名前 3 个，写进 errors 和 trace。混合表时人知道该改哪几行。</td></tr>
+
+<tr><td><span class="tag t-yb">r02 一般</span></td>
+    <td>260 字硬截断切在半个词上（「木耳」切成「木」），尾巴拖着半句「4. 4.」</td>
+    <td><code>intent.py:_present_para</code></td>
+    <td>超长时退到最近句读（不早于 180 字），并标「…（原文未完，出处见下）」。整表贴 7 类无关品类那件事由下方第 6 条拍板单独解决。<br><span class="ok">验：长段落实跑，以完整句 + 未完标记收尾</span></td></tr>
+
+<tr><td><span class="tag t-qw">r02 轻微</span></td>
+    <td>拒答标题说「这个问法」，正文却说「不是换个问法就能查到」</td>
+    <td><code>intent.py</code></td>
+    <td>标题统一成陈述式「库里没有 ○○ 的限值记录」，指向缺记录而不是问法不好。</td></tr>
+
+<tr><td><span class="tag t-qw">r05 观察</span></td>
+    <td>「十三点二」被判格式认不出，提示只说「要写数字」</td>
+    <td><code>tasks/runner.py</code></td>
+    <td>两处失败提示补一句「中文数字请写成 13.2 这样的阿拉伯数字」。</td></tr>
+
+<tr><td><span class="tag t-qw">切版遗留</span></td>
+    <td>一条回归测试锁死了 01:17 切版时已删除的旧 boundary 句子，160 个测试里稳定 1 红</td>
+    <td><code>tests/test_nightly_20261110.py</code></td>
+    <td>断言从「锁字面」改成「锁语义」：boundary 仍须明说片段里的数不能直接拿去判定。<b>这是唯一动到的测试文件</b>，产品行为没改。</td></tr>
+
+<tr><td><span class="tag t-yb">拍板落地</span></td>
+    <td>玉米 / 大豆 / 小麦一律被说成「库里还没收，请补国标」——把「不归我们判」和「还没补」混为一谈</td>
+    <td><code>intent.py</code><br><code>corpus/米粮标准清单_待核对.md</code></td>
+    <td>小崔 13:12 拍板：玉米大豆厂里有，但属<b>油化榨油原料</b>，不是米粮部原粮。三套话术分流：玉米/大豆说油化、小麦说化验室不做，两者都不再劝补国标；<b>大米成品指标才是真「待补」</b>。业务事实写进语料「七、业务范围边界」作可追溯出处。<br><span class="ok">验：9 项定点 + 160/160 全绿</span></td></tr>
+</tbody>
+</table>
+
+<h2>二、验证记录 <small>改了不算数，跑过才算数</small></h2>
+<ul class="verify">
+  <li><span class="ok">compileall</span>：<code>qc_daily/</code>、<code>tests/</code>、<code>nightly/run_round.py</code> 全过。</li>
+  <li><span class="ok">第一轮 5 项定点</span>：环比 +37.1% / 23.21 个百分点 · near_limit_count=5 · 截断不切词 · 重启后 alerts 仍在 · 两种空表结论不同。</li>
+  <li><span class="ok">第二轮 13 项定点</span>：三套业务话术 + 闲聊黑名单 · 砷整表折叠 · 死键删除 · 版本提醒新句 · 缺等级提示 · headline 半句 · 探针日期/公式/实体回扣 · 巡检断言兼容。<b>全部 PASS</b>。</li>
+  <li><span class="ok">unittest discover</span>：Ran 160 tests → <b>OK</b>。中途 3 条红灯全部归因并修掉：换文案撞旧断言、切版遗留的过时测试、合并实体词表差点拆掉 11-10 的防蒙混保护。</li>
+  <li><span class="ok">HTTP 冒烟（服务已重启）</span>：<code>/app</code> 200；chat 玉米→油化、稻谷→正常反问、大米→待补口径，三条全中。</li>
+  <li><b>过程中自己造出又补掉的两个坑</b>：① 新常量 <code>_OUT_OF_SCOPE</code> 覆盖了原有的闲聊黑名单（已改名 <code>_BUSINESS_SCOPE</code>）；② 简单合并实体词表会让「问砷靠『稻谷』两字蒙混过关」重新得逞（已改成只在品类级拒答时放宽）。</li>
+</ul>
+
+<h2>三、8 条全部拍板 <small>小崔 13:20「其他七个也自己拍板吧，我看效果如何再说」· 每条都可一键推翻</small></h2>
+<div class="note" style="margin:0 0 16px">
+  <b>我用的拍板原则</b>：<b>能靠「说清楚」解决的，绝不动判定逻辑</b>；真要动，一律加兜底 + 实跑复验。宁可少给，不可给错。
+</div>
+<div class="cards">
+  <div class="c done"><div class="h">✅ 1 · 缺「等级」列（r03 一般③）· 拍：补提示，不拒判</div>
+    <p>3 等是 GB 1350 的中等/最低收储线，按最宽松判在收购场景说得通；直接拒判会让正常宽表跑不出结果。但<b>必须明说默认了什么</b>。</p>
+    <p>已落 <code>importer.py</code>：宽表无「等级/等别」列时写 <code>【等级】</code> 提示「按表1 第 3 等补齐；若按 1/2 等收购请补列重传」，并加进 alerts 白名单。</p>
+    <p class="why">推翻点：若验收必须按实际等级判 → 改成缺列直接拒判，一行分支的事。</p></div>
+
+  <div class="c done"><div class="h">✅ 2 · 玉米 / 大豆归属（r02 一般①）· 小崔 13:12 拍板</div>
+    <p>厂里有，但<b>不是米粮部原粮</b>——榨油用，归<b>油化板块</b>。既不是「本厂不做」，也不是「库里没补」。</p>
+    <p>三套话术分流：玉米/大豆说油化、小麦说化验室不测，都不再劝补国标；<b>大米成品指标才是真「待补」</b>。业务事实写进语料「七、业务范围边界」作可追溯出处。</p>
+    <p class="why">推翻点：哪天米粮部也收玉米，改 <code>_BUSINESS_SCOPE</code> 一张表即可。</p></div>
+
+  <div class="c done"><div class="h">✅ 3 · <code>release_allowed</code> 死键（r02 轻微）· 拍：删</div>
+    <p>全库零代码读它，却叫「允许放行」、值是 true——任何人翻到都会以为系统能替人放行，而第四条原则是<b>放行由人签字</b>。</p>
+    <p>已从 <code>qc_daily_config.json</code> 删键，决定记进 <code>DECISIONS_2026-11-11.md §8</code>；<code>limits_verified=true</code> 与 <code>active_limits_verified</code> 不受影响（实跑确认仍为 True）。</p>
+    <p class="why">推翻点：若外部报表真需要这个标记，改名为 <code>external_release_marker</code> 并注明「不参与任何判定」。</p></div>
+
+  <div class="c done"><div class="h">✅ 4 · headline 带版本（r04 观察①）· 拍：加，但仅版本不一致时</div>
+    <p>126 项全按表内 GB 1350—2025 限值判，headline 原本一个字不提依据哪一版——只读一行就签字的人看不见。</p>
+    <p><code>task_web.py:_headline</code> 检测到 <code>【版本】</code> note 时补半句「按表内标准号判，版本须由化验室确认，不得直接放行」。纯文案，判定不变。</p>
+    <p class="why">推翻点：嫌 headline 太长就去掉这半句，完整说明仍在下方 alerts。</p></div>
+
+  <div class="c done"><div class="h">✅ 5 · 自查抓「抄旧表」（r03 观察②）· 拍：不塞进自查，改由版本提醒点名</div>
+    <p>表内 2025 标准号 + 限值 4.0 是<b>自洽的</b>，不是敲错；塞进「录入自查」会误报，还把「自查」的语义搞混。</p>
+    <p>已在两处 <code>【版本】</code> 提醒补一句「表内限值列若沿用旧版数值，请逐项与本版结构化限值核对」。让版本问题归版本提醒管。</p>
+    <p class="why">推翻点：若确认 2025 版数值表已逐格入库到可比粒度，再给 <code>validate_records</code> 加跨列比对。</p></div>
+
+  <div class="c done"><div class="h">✅ 6 · 砷整表倒 7 类无关品类（r02 一般②）· 拍：折叠整表，不切句</div>
+    <p>切句过滤有真风险：目标表行可能不含被问实体，滤狠了会把正确那行一起删掉。这是台账里「离数据进错最近」的一条，不能拿猜的方案治。</p>
+    <p><code>intent.py</code> 检测段落含 ≥3 个外来食品类别词 → <b>整段不贴</b>，换成一句可行动的提示（指路 <code>corpus/limits.json</code> 与原文表行）。宁可少给，不可给错，符合「低置信度转人工」。</p>
+    <p class="why">验：问「稻谷里砷」不再出现水产/松茸/蔬菜，且给出折叠提示。推翻点：若哪天要恢复整表，删掉这段折叠即可。</p></div>
+
+  <div class="c done"><div class="h">✅ 7 · 探针 3 条 · 拍：全改，明早看 r01 日志验</div>
+    <p>① 实体回扣改为「只在品类级拒答时放宽到品类词」，既治三晚假 FAIL，又<b>保住</b> 11-10 那道「问砷靠铬蒙混」的保护；② BD-04 公式从 E2（检验日期）挪到 F2，才测得到本来要测的纯公式列；③ 样张日期改用 <code>PROBE_DATE = date.today()</code>，刻意造的不匹配日期 2026-10-01 保留。</p>
+    <p class="why">验：53 个场景正常生成、日期无写死、三条巡检断言与 160 测试全过。<b>今晚 0:00 会用新探针，明早看 r01 日志确认没跑偏。</b></p></div>
+
+  <div class="c done"><div class="h">✅ 8 · 夜测数据污染趋势（r03 观察③）· 拍：现在不改，但动作写死</div>
+    <p>53.22% 水分是 <code>history.jsonl</code> 的种子数据。演示前动数据链路风险大于收益，独立 <code>QC_DATA_DIR</code> 排到演示后。</p>
+    <p><b>不再挂「以后再说」</b>：演示当天上午，用 <code>demo/</code> 干净数据替换 <code>qc_daily_data/history.jsonl</code> → 重启服务 → 刷新报告页确认「近 7 日」只剩真数。此项已作为本清单的演示前检查项落地。</p>
+    <p class="why">推翻点：要现在就隔离，给 runner 加 <code>QC_DATA_DIR</code> 环境变量即可，但得重跑全套夜测。</p></div>
+</div>
+
+<div class="note">
+  <b>顺带确认「不用改」的两条，别照着台账里的旧药方抓药：</b><br>
+  · <b>r01 严重①「反问是死胡同」已经在 01:17 切版时修掉了</b>，r02 明确复核过（含籼粳的问法现在真给 2009 的数）；台账里那句「建议 a 档」已在 <code>DECISIONS_2026-11-11.md §0</code> 作废。<br>
+  · r02 一般②「两表同值四项仍反问」也被切版覆盖了（§7：含品种一律从结构化库取数，同值四项照给）。<br>
+  · 切版两处核心行为（宽表自动补齐 2009 限值、表内 2025 标准号被拦）r03/r04 已实测通过，本轮没碰。
+</div>
+
+<div class="warnbox">
+  <b>状态与下一步</b><br>
+  1. <b>服务已重启，现在就能看效果</b>：旧 PID 20288 已停，新监听 PID <b>19084</b>（受管后台任务），加载全部新代码。<code>/app</code> HTTP 200，三条 chat 冒烟全中。打开 <code>http://127.0.0.1:8000/app</code>，试一句「玉米的容重限值是多少」。<br>
+  2. <b>没有提交</b>：按铁律 <code>git add / commit / push</code> 一个没做；<code>HEAD</code> 仍是 <code>6e45bdf</code>。改动全在工作区，含 01:17 切版的 10 个文件。要不要提交、怎么拆提交，等你发话。<br>
+  3. <b>这轮动到的范围</b>：<code>qc_daily/</code> 6 文件、<code>tests/</code> 1、<code>nightly/run_round.py</code>、<code>DECISIONS_2026-11-11.md</code>、本清单、<code>corpus/米粮标准清单_待核对.md</code>、<code>qc_daily_config.json</code>。<b>没碰</b>：<code>corpus/</code> 里的标准原文与限值文件、<code>.env</code>、大模型开关（<code>QC_USE_LLM</code> 保持关闭）。<br>
+  4. <b>今晚 0:00 巡检会用新探针</b>：明早看 <code>nightly/rounds/nightly-2026-11-12-r01.md</code>，重点确认 BD-04 不再报「日期读不出」、RF 系列不再有品类级假 FAIL。
+</div>
+
+<footer>小懒Q 🔍 · 2026-11-11 12:30–13:2x · 素材：FINDINGS 494–643、DECISIONS_2026-11-11、5 份当晚日志、小崔 13:12 口述与 13:20 授权；所有改法先读码确认、再实跑复验。</footer>
+
+</div>
+</body>
+</html>

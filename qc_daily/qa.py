@@ -199,8 +199,8 @@ def lookup_standard(item: str = "出糙率", product: str = "籼稻谷", grade: 
         "项目": n, "产品": section["table"], "等级": str(grade or "3"),
         "标准号": spec["standard"], "限值": spec["limit"], "方向": spec["direction"],
         "限值原文": spec.get("expr"), "条款出处": spec["limit_source"],
-        "版本状态": (f"GB 1350—2025 预置（未启用）；当前执行 {_CTX.config.standard_version}，"
-                     f"限值待人工核对，不得用于放行"),
+        "版本状态": (f"当前执行 {_CTX.config.standard_version}，限值已逐格核对并经人工复核；"
+                     f"GB 1350—2025 为 2027-01-01 实施的预置版，未启用"),
     }, ensure_ascii=False)
 
 
@@ -214,8 +214,8 @@ def check_batch(batch_id: str = "") -> str:
     return json.dumps({
         "批次": str(batch_id), "结论": rows,
         "结论来源": "Workflow 中 models.compare() 已算好并缓存；本工具只读，不重新判定",
-        "版本状态": (f"当前执行 {_CTX.config.standard_version}，限值待人工核对；"
-                     f"结论仅供复核，不得作为放行依据"),
+        "版本状态": (f"当前执行 {_CTX.config.standard_version}，限值已逐格核对并经人工复核；"
+                     f"结论仅供复核，需人工签字，不作为自动放行依据"),
     }, ensure_ascii=False)
 
 

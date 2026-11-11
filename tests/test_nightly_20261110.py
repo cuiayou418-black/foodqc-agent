@@ -236,7 +236,11 @@ class TestIntentWording(unittest.TestCase):
     def test_边界话不再否认表里有数字(self):
         a = knowledge_answer("稻谷里砷的限值是多少")
         self.assertNotIn("没检索到带限值的表行", " ".join(a["boundary"]))
-        self.assertTrue(any("未核对原文前不能拿去判合格" in b for b in a["boundary"]))
+        # 2026-11-11 01:17 切版后限值已逐格人工核对入库，旧句
+        # 「未核对原文前不能拿去判合格」被更准的一句替换；这里锁语义、不锁字面。
+        self.assertTrue(any("已核对的结构化限值" in b or "不能拿去判" in b
+                            for b in a["boundary"]),
+                        "boundary 仍须明说：片段里的数字不能直接拿去判定")
 
     def test_不含双表时仍能答出单行限值(self):
         a = route("大米成品的Cd含量不得超过多少")["answer"]

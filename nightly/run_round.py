@@ -31,6 +31,9 @@ from datetime import date, datetime
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
+#: 探针样张的检验日期跟当天走，不再写死 2026-11-10（DECISIONS_2026-11-11 §5）。
+#: 写死会让「日期不匹配」这类场景随日期漂移成假绿，隔几天就测不出东西了。
+PROBE_DATE = date.today().isoformat()
 BASE = "http://127.0.0.1:8000"
 UPLOAD_DIR = REPO / "qc_daily_data" / "task_uploads"
 OUT_DIR = Path(__file__).resolve().parent / "rounds"
@@ -121,7 +124,7 @@ ITEMS = [("出糙率", "≥", "75.0"), ("整精米率", "≥", "44.0"), ("杂质
 SRC = "GB 1350—2025 表1 第3等 原文第5页"
 
 
-def long_table(batches: list[dict], date="2026-11-10") -> list[list]:
+def long_table(batches: list[dict], date=PROBE_DATE) -> list[list]:
     rows = [LONG_HEAD]
     for b in batches:
         for item, dirn, lim in ITEMS:
@@ -139,7 +142,7 @@ def mk_file(spec: dict) -> str:
     kind = spec["kind"]
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     if kind == "long":
-        return _write_csv(f"{stamp}_夜测_长表.csv", long_table(spec["batches"], spec.get("date", "2026-11-10")))
+        return _write_csv(f"{stamp}_夜测_长表.csv", long_table(spec["batches"], spec.get("date", PROBE_DATE)))
     if kind == "raw_csv":
         return _write_csv(f"{stamp}_夜测_{spec['name']}", spec["rows"], spec.get("encoding", "utf-8-sig"))
     if kind == "xlsx":
@@ -247,7 +250,7 @@ def build_scenarios() -> list[dict]:
         S("TB-04", "表格·正常", "宽表（一行一批，一列一项）", "task",
           file={"kind": "raw_csv", "name": "宽表.csv", "rows": [
               ["批次号", "产品名称", "检验日期", "检验员", "出糙率", "整精米率", "杂质含量", "水分含量"],
-              ["DEMO-W01", "中晚籼稻谷", "2026-11-10", "张伟", "78.2", "51.0", "0.5", "13.1"]]},
+              ["DEMO-W01", "中晚籼稻谷", PROBE_DATE, "张伟", "78.2", "51.0", "0.5", "13.1"]]},
           question="做成日报"),
         S("TB-05", "表格·正常", "18 批 126 项（压力）", "task",
           file={"kind": "long", "batches": [
@@ -267,27 +270,30 @@ def build_scenarios() -> list[dict]:
     sc += [
         S("BD-01", "表格·畸形", "表头上方有标题行", "task",
           file={"kind": "raw_csv", "name": "标题行.csv", "rows": [
-              ["××粮油有限公司 原粮检验原始记录表"], ["检验日期：2026-11-10"],
+              ["××粮油有限公司 原粮检验原始记录表"], [f"检验日期：{PROBE_DATE}"],
               LONG_HEAD, ["DEMO-T01", "中晚籼稻谷", "水分含量", "13.2", "%", "≤", "13.5",
-                          "GB 1350—2025", SRC, "2026-11-10", "张三", "A"]]},
+                          "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"]]},
           question="做成日报"),
         S("BD-02", "表格·畸形", "数值带百分号 13.2%", "task",
           file={"kind": "raw_csv", "name": "百分号.csv", "rows": [
               LONG_HEAD, ["DEMO-V01", "中晚籼稻谷", "水分含量", "13.2%", "%", "≤", "13.5",
-                          "GB 1350—2025", SRC, "2026-11-10", "张三", "A"]]},
+                          "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"]]},
           question="做成日报"),
         S("BD-03", "表格·畸形", "未检出 / — / / / ND 混用", "task",
           file={"kind": "raw_csv", "name": "未检出.csv", "rows": [
               LONG_HEAD,
-              ["DEMO-U01", "中晚籼稻谷", "水分含量", "未检出", "%", "≤", "13.5", "GB 1350—2025", SRC, "2026-11-10", "张三", "A"],
-              ["DEMO-U02", "中晚籼稻谷", "水分含量", "—", "%", "≤", "13.5", "GB 1350—2025", SRC, "2026-11-10", "张三", "A"],
-              ["DEMO-U03", "中晚籼稻谷", "水分含量", "ND", "%", "≤", "13.5", "GB 1350—2025", SRC, "2026-11-10", "张三", "A"]]},
+              ["DEMO-U01", "中晚籼稻谷", "水分含量", "未检出", "%", "≤", "13.5", "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"],
+              ["DEMO-U02", "中晚籼稻谷", "水分含量", "—", "%", "≤", "13.5", "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"],
+              ["DEMO-U03", "中晚籼稻谷", "水分含量", "ND", "%", "≤", "13.5", "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"]]},
           question="做成日报"),
         S("BD-04", "表格·畸形", "xlsx 纯公式列（无缓存值）", "task",
           file={"kind": "xlsx", "name": "公式列.xlsx", "sheets": {"记录": [
               ["批次号", "产品名称", "出糙率", "水分含量", "检验日期", "检验员"],
-              ["DEMO-F01", "中晚籼稻谷", 76.5, 13.2, "2026-11-10", "张三"]]},
-              "formula": ("E2", "=IF(D2<=13.5,\"合格\",\"不合格\")")},
+              ["DEMO-F01", "中晚籼稻谷", 76.5, 13.2, PROBE_DATE, "张三"]]},
+              # 拍板：公式挪到 F 列（检验员）。E 列是「检验日期」，压在那儿
+              # 场景永远只报「日期读不出」，测不到本该测的「纯公式列」
+              # （夜测 11-11 r04 轻微③）。
+              "formula": ("F2", "=IF(D2<=13.5,\"合格\",\"不合格\")")},
           question="做成日报"),
         S("BD-05", "表格·畸形", "日期与表内不一致", "task",
           file={"kind": "long", "batches": base, "date": "2026-10-01"}, question="做成日报"),
@@ -296,19 +302,19 @@ def build_scenarios() -> list[dict]:
         S("BD-07", "表格·畸形", "缺限值列（只剩实测值）", "task",
           file={"kind": "raw_csv", "name": "缺限值.csv", "rows": [
               ["批次号", "产品名称", "检测项目", "实测值", "检验日期"],
-              ["DEMO-X01", "中晚籼稻谷", "水分含量", "13.2", "2026-11-10"]]},
+              ["DEMO-X01", "中晚籼稻谷", "水分含量", "13.2", PROBE_DATE]]},
           question="做成日报"),
         S("BD-08", "表格·畸形", "空表（只有表头）", "task",
           file={"kind": "raw_csv", "name": "空表.csv", "rows": [LONG_HEAD]}, question="做成日报"),
         S("BD-09", "表格·畸形", "全角 ＜0.5", "task",
           file={"kind": "raw_csv", "name": "全角.csv", "rows": [
               LONG_HEAD, ["DEMO-Z01", "中晚籼稻谷", "杂质含量", "＜0.5", "%", "≤", "1.0",
-                          "GB 1350—2025", SRC, "2026-11-10", "张三", "A"]]},
+                          "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"]]},
           question="做成日报"),
         S("BD-10", "表格·畸形", "数值列混入文字", "task",
           file={"kind": "raw_csv", "name": "混文字.csv", "rows": [
               LONG_HEAD, ["DEMO-M01", "中晚籼稻谷", "水分含量", "十三点二", "%", "≤", "13.5",
-                          "GB 1350—2025", SRC, "2026-11-10", "张三", "A"]]},
+                          "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"]]},
           question="做成日报"),
     ]
 
@@ -317,7 +323,7 @@ def build_scenarios() -> list[dict]:
         S("RJ-01", "拒绝", "真实批次号（非 DEMO）", "task",
           file={"kind": "raw_csv", "name": "真实批次.csv", "rows": [
               LONG_HEAD, ["2026ML1109001", "中晚籼稻谷", "水分含量", "13.2", "%", "≤", "13.5",
-                          "GB 1350—2025", SRC, "2026-11-10", "张三", "A"]]},
+                          "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"]]},
           question="做成日报", expect_refuse=True),
         S("RJ-02", "拒绝", "不支持的扩展名 .txt", "task",
           file={"kind": "plain", "name": "记录.txt", "text": "批次号,水分\nDEMO-01,13.2"},
@@ -465,8 +471,17 @@ def auto_check(scn, facts: dict) -> tuple[str, list[str]]:
         # 还得问「有没有回扣被问的那个实体」：旧版只要整份返回体里出现
         # 任一否定词就放行，问砷那题靠语料里关于铬的一句「暂不收录」蒙混过关。
         q = str((scn.get("payload") or {}).get("question", "") or scn.get("question", ""))
-        ents = [w for w in _KEY_ENTITIES if w in q] or \
-               [w for w in _CAT_ENTITIES if w in q]
+        # 2026-11-11 拍板：品类级拒答回扣的是品类名（「没有玉米的这套限值」），
+        # 旧版 _KEY_ENTITIES 优先会把「玉米的容重」锁在「容重」上，连挂三晚假 FAIL。
+        # 但**不能无条件合并**：问砷时答案里只有「铬…与稻谷验收关系弱」，
+        # 合并后靠「稻谷」两字就能蒙混过关，正是 11-10 r02 加此断言要防的。
+        # 故只在答案明显是「整个品类不覆盖」时才把品类词纳入回扣检查。
+        ents = [w for w in _KEY_ENTITIES if w in q]
+        cat_refusal = any(k in text for k in (
+            "这套限值", "不归本系统", "不在本厂化验室", "不在本系统",
+            "收录范围", "检验范围", "业务范围"))
+        if cat_refusal:
+            ents += [w for w in _CAT_ENTITIES if w in q]
         if ents and not any(w in text for w in ents):
             notes.append(f"拒答没回扣被问的实体（{'/'.join(ents[:3])}），可能蹭了别处的否定词")
             refused = False

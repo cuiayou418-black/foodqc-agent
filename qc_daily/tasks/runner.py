@@ -44,7 +44,8 @@ def diagnose_missing_dates(dates: list, no_rows: bool, skipped: int = 0,
     if no_rows and skipped and total and skipped >= total:
         return (f"表里读到 {total} 行数据，但 {skipped} 行的实测值读不懂"
                 "（「＜0.5」「未检出」「—」这类写法），一行都没进判定，本次没跑。",
-                "下一步：把下方提醒里点名的那几行实测值改成数字后重传；"
+                "下一步：把下方提醒里点名的那几行实测值改成数字后重传"
+                "（中文数字请写成 13.2 这样的阿拉伯数字）；"
                 "日期列本身没问题，不要改日期。",
                 "values_unreadable")
     if no_rows and skipped:
@@ -56,7 +57,8 @@ def diagnose_missing_dates(dates: list, no_rows: bool, skipped: int = 0,
         return ("这张表一行可判定的记录都没读出来（可能是空表、只有表头，"
                 "或者「实测值」整列都读不懂）。没有可判定的记录，本次没跑。",
                 "下一步：确认表里有数据行；实测值要写数字——「未检出」「—」「＜0.5」"
-                "这类现在会整行跳过，原值会列在下方提醒里。",
+                "这类现在会整行跳过，中文数字请写成 13.2 这样的阿拉伯数字，"
+                "原值会列在下方提醒里。",
                 "no_rows")
     return ("表里读到了数据行，但一条检验日期都没读出来"
             "（日期列可能是公式没存计算结果，或格式认不出）。",
@@ -237,7 +239,12 @@ class TaskRunner:
         if summary["errors"]:
             res.status = "failed"
             res.errors.extend(summary["errors"])
-            res.notes.append("下一步：按错误修正对应文件后重跑；其余可读文件已保留。")
+            # 只有 1 个文件、而且它就坏了时，别提「其余」——根本没有其余
+            # （夜测 2026-11-11 r05 轻微①）。用导入汇总判断，不依赖请求字段名。
+            if len(summary["errors"]) == 1 and not summary["files"]:
+                res.notes.append("下一步：这个文件没能读入，按上面的错误修好后重新上传。")
+            else:
+                res.notes.append("下一步：按错误修正对应文件后重跑；其余可读文件已保留。")
             self._trace(res, "failed", "import_errors", str(summary["errors"])[:400])
             return ctx
         # 导入层已经判死（如"宽表缺少批次列"）时，先报这个。
@@ -260,6 +267,14 @@ class TaskRunner:
                 summary["dates"], no_rows,
                 skipped=int(summary.get("skipped_rows") or 0),
                 total=int(summary.get("data_rows") or 0))
+            # 导入层现在会写明「0 字节」还是「只有标题行」，别再拿三选一糊过去
+            # （夜测 2026-11-11 r05 一般②）：两种 run 的 headline 不该逐字相同。
+            empty_notes = [n for n in summary["notes"] if "没有数据行" in n]
+            if code == "no_rows" and empty_notes:
+                detail = empty_notes[0].split("：", 1)[-1].strip()
+                msg = f"表里没读到数据行：{detail}"
+                nxt = "下一步：确认文件传完整、且除标题行外有数据行，然后重传；不要改检验日期。"
+                res.notes.extend(empty_notes[:2])
             res.errors.append(msg)
             res.notes.append(nxt)
             self._trace(res, "failed", code,
@@ -281,8 +296,8 @@ class TaskRunner:
             res.status = "failed"
             res.errors.append(f"这些记录没取到限值，系统不猜限值、不判：{names}")
             res.notes.append(
-                "原因：当前执行版（GB 1350—2009）限值还没人工核对，宽表模式不会拿 2025 版的数补齐；"
-                "补了就成「按新版判旧货」。下一步：改用带「实测值 / 指标方向 / 限值 / 标准号 / "
+                "原因：这些项目在表里没有限值列，结构化限值库里也没有逐格核对过的对应条目，"
+                "系统不猜限值、不判。下一步：改用带「实测值 / 指标方向 / 限值 / 标准号 / "
                 "限值出处」列的明细表，或先核对限值后回填。")
             self._trace(res, "failed", "missing_limits", str(missing)[:300])
             return ctx
@@ -353,10 +368,16 @@ class TaskRunner:
             self._trace(res, "failed", "db_error", str(e)[:200])
             return False
         if bad:
+            uniq = list(dict.fromkeys(bad))
+            shown = "、".join(uniq[:3]) + ("…" if len(uniq) > 3 else "")
             res.status = "failed"
-            res.errors.append("只接 DEMO 假数据：发现非 DEMO- 前缀的批次号，拒绝执行")
-            res.notes.append("下一步：把真实批次号换成 DEMO- 假批次后重跑，真实批次与实测值不进本系统。")
-            self._trace(res, "failed", "real_batch_rejected", f"{len(bad)} 个非 DEMO 批次")
+            # 只报个数不说哪几行，混合表里人不知道该改哪儿
+            # （夜测 2026-11-11 r05 轻微④）。
+            res.errors.append(f"只接 DEMO 假数据：发现非 DEMO- 前缀的批次号（{shown}），拒绝执行")
+            res.notes.append("下一步：把上面点名的真实批次号换成 DEMO- 假批次后重跑，"
+                             "真实批次与实测值不进本系统。")
+            self._trace(res, "failed", "real_batch_rejected",
+                        f"{len(uniq)} 个非 DEMO 批次：{shown}")
         return not bad
 
     # ---------------------------------------------------------------- 执行（复用 A/B/C/D）
@@ -484,11 +505,16 @@ class TaskRunner:
                           "defect_distribution": {}, "trend": [], "alerts": []}
         ctx["agent_status"] = "done"
         ctx["agent_errors"] = []
-        res.notes.append(f"录入自查命中 {len(suspects)} 条疑点，全部标「待人工确认」。")
+        # 0 条时「全部标待人工确认」没有「全部」可言，读数的人会去找不存在的待办
+        # （夜测 2026-11-11 r03 轻微④）。顺手把「读了 N 行」带上做数据对账。
         if suspects:
+            res.notes.append(f"录入自查命中 {len(suspects)} 条疑点，已标「待人工确认」。")
             res.status = "pending_review"
             self._trace(res, "pending_review", "suspects_found", str(len(suspects)))
         else:
+            res.notes.append(
+                f"读了 {len(rows)} 行，未命中疑点（值域 / 相邻批次量级跳变 / 小数位 / "
+                "跨列逻辑 / 重复漏填五项都查过）；这不等于数据都对。")
             self._state(res, "validating", "无疑点")
         return ctx
 
@@ -634,7 +660,7 @@ class TaskRunner:
                 why = "这格数据" + why[len(f"「{item}」"):]   # 前面已经写了项目名，别重复
             review.append(f"{who + ' · ' if who and who not in why else ''}{item}：{why}；"
                           f"建议 {s.get('建议动作','')}")
-        review.append("标准版本：当前执行 GB 1350—2009，限值尚未人工核对；"
+        review.append("标准版本：当前执行 GB 1350—2009，限值已逐格人工核对并经复核；"
                       "GB 1350—2025 为 2027-01-01 预置，不得用于判旧货")
         review.append("放行决策（能否收购/接收）：系统不给「能收/不能收」结论，"
                       "只摆事实与待复核原因，需人工复核签字")
@@ -651,8 +677,8 @@ class TaskRunner:
             "action": "snapshots/quality.json", "label": "打开原始记录（只读）",
         }, {
             "kind": "knowledge", "title": "去知识库核对限值",
-            "desc": "当前执行 GB 1350—2009，限值还没人工核对。"
-                    "在 /knowledge 页下半部分的「待核对区」上传或确认资料；"
+            "desc": "当前执行 GB 1350—2009，限值已逐格人工核对并经复核。"
+                    "如需补新资料，可在 /knowledge 页下半部分的「待核对区」上传或确认；"
                     "确认纳入 ≠ 可用新限值判定。",
             "action": "/knowledge#kb-inbox-section", "label": "打开知识库 · 待核对区",
         }, {

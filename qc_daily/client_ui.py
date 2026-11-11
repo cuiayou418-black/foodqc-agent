@@ -293,7 +293,7 @@ font-family:Consolas,monospace;word-break:break-all}
       <span class="avatar">Q</span>
       <div>
         <div>小崔 · 品管部</div>
-        <div class="side-foot">只读 · 不放行 · 不签字<br>DEMO 假数据 ｜ GB 1350—2009 限值待核对</div>
+        <div class="side-foot">只读 · 不放行 · 不签字<br>DEMO 假数据 ｜ GB 1350—2009 限值已核对</div>
       </div>
     </div>
   </aside>
@@ -1065,11 +1065,12 @@ def _brief(result: dict) -> dict:
         vers = re.findall(r"GB\s*1350[—-]\d{4}", version)
         if len(vers) >= 2:
             paras.append(
-                f"还有个前提得说在前面：现在执行的是 {vers[0]}，语料里的 {vers[1]} 还没实施，"
-                "限值也还没人工核对过。"
+                f"还有个前提得说在前面：现在执行的是 {vers[0]}，限值已逐格人工核对并经复核；"
+                f"语料里的 {vers[1]} 是预置版本、还没实施，不得用于判旧货。"
             )
         else:
-            paras.append("还有个前提：当前执行的版本与语料里的新版不是一回事，限值也还没人工核对过。")
+            paras.append("还有个前提：当前执行版的限值已逐格人工核对并经复核；"
+                         "语料里的新版仅作预置，不得用于判旧货。")
     paras.append("所以我不给「能收 / 不能收」，这里只摆事实和待复核的原因，放行得你复核完签字。")
 
     return {
@@ -1113,8 +1114,8 @@ def _checkpoints(text: str, batch_id: str, mode: str, in_chain: bool = False) ->
         out.append({
             "kind": "knowledge",
             "title": "去知识库核对限值",
-            "desc": "当前执行的 GB 1350—2009 限值还没人工核对。"
-                    "在 /knowledge 页面下半部分的「待核对区」上传或确认资料。",
+            "desc": "当前执行的 GB 1350—2009 限值已逐格人工核对并经复核。"
+                    "如需补新资料，可在 /knowledge 页面下半部分的「待核对区」上传或确认。",
             "action": "/knowledge#kb-inbox-section",
             "label": "打开知识库 · 待核对区",
         })

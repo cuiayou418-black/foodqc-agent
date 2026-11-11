@@ -396,13 +396,13 @@ def _assemble_sections() -> dict:
     for s in results.get("validate_record", {}).get("data", {}).get("疑点", []):
         review.append(f"{s['item']}：{s['reason']}；建议 {s['建议动作']}")
 
-    review.append("标准版本：当前执行 GB 1350—2009，限值尚未人工核对；"
+    review.append("标准版本：当前执行 GB 1350—2009，限值已逐格核对并经人工复核；"
                   "语料中 GB 1350—2025 仅作预置（2027-01-01 实施），不得用于判旧货")
     review.append("放行决策（能否收购/接收）：本 harness 只摆事实与待复核原因，"
                   "不给「能收/不能收」结论，需人工复核签字")
 
     uncovered.append("感官项「色泽、气味」：人工确认项，不参与数值判定")
-    uncovered.append("其它等级（1/2/4/5 等）、粳稻谷表2、GB 1350—2009 限值：本次 DEMO 未覆盖")
+    uncovered.append("其它等级（1/2/4/5 等）、粳稻谷表2：本次 DEMO 未覆盖（限值本身已在 corpus/limits.json 收录）")
     uncovered.append(f"数据范围：{DATA_SCOPE}")
     return {"已确认": confirmed, "待人工复核": review, "未覆盖": uncovered}
 

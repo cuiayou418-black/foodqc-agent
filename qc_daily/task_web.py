@@ -72,6 +72,10 @@ def _status(run_id: str) -> dict | None:
                     "outputs": res.outputs, "trace": res.trace, "notes": res.notes,
                     "errors": res.errors, "sections": res.sections,
                     "metrics": res.metrics, "verify_ok": res.verify_ok,
+                    # 磁盘重建别丢：critical 告警里写着「哪一批、哪几项、错在哪」，
+                    # 漏掉这一行 → 服务重启后同一 run 的卡片少掉最要紧那条
+                    # （夜测 2026-11-11 r04 一般①）。
+                    "alerts": res.alerts,
                     "input_digest": res.input_digest,
                     "conclusion_digest": res.conclusion_digest,
                     "data_checksum": res.data_checksum,
@@ -246,8 +250,16 @@ def _headline(d: dict) -> tuple[str, str]:
         head = f"{batches} 批共 {total} 个检测项：{total - fail} 项数值符合、{fail} 项不符合"
         if n_doubt:
             head += f"；符合的里有 {n_doubt} 项要先核对录入疑点，暂不能当结论"
+        # 这个数只数「待人工复核」里的说明行，不含 section_notes / metrics.alerts，
+        # 于是 headline 说 2 条、卡片却列 7 行（夜测 2026-11-11 r04 轻微②）。
+        # 表内标准号与执行版不一致时，headline 不能只说「N 项符合」——
+        # 只读一行就签字的人看不到依据的是哪一版（夜测 2026-11-11 r04 观察①）。
+        # 拍板：加半句，不动判定；完整的版本说明仍在下方 alerts。
+        if any("【版本】" in str(x) for x in (d.get("notes") or [])):
+            head += "；按表内标准号判，版本须由化验室确认，不得直接放行"
+        # 不数条数，比给一个对不上的数诚实。
         if n_note:
-            head += f"；另有 {n_note} 条提醒"
+            head += "；另有提醒，详见下方"
         return head, ("warn" if (fail or n_rev_v) else "ok")
 
     # 录入自查这类没有逐项判定的任务：结论就是「扫出几处可疑」
@@ -359,7 +371,7 @@ def _build_view(d: dict, run_id: str) -> dict:
         if not s or s.startswith("[pending_review]"):
             continue
         alerts.append(s if s.startswith(("下一步", "原因", "提示", "说明",
-                                         "⚠️", "⛔", "【版本】"))
+                                         "⚠️", "⛔", "【版本】", "【等级】"))
                       else f"提示：{s}")
     for a in (d.get("metrics") or {}).get("alerts") or []:
         alerts.append(str(a))

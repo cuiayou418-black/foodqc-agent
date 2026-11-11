@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """米粮（稻谷验收）限值解析器 · 唯一取值入口 resolve_limit()
 
-限值唯一来源：corpus/limits.json → GB1350-2025 → 表格 → 表1/表2 → 质量要求。
+限值唯一来源：corpus/limits.json → GB1350-2009（当前执行版）→ 表格 → 表1/表2 → 质量要求。
 本模块对该文件只读 —— 不写回、不覆盖、不格式化。
 
 三类指标统一由 resolve_limit() 处理：
@@ -9,9 +9,12 @@
   ② 固定上限型「指标方向+限值」→ 直接取 "≤" / 1.0；
   ③ 感官型「要求」              → 非数值，标记人工确认项，不参与数值判定。
 
-★ 版本纪律：解析出的数值属于 GB 1350—2025（语料记载 2027-01-01 实施）的预置数据。
-  当前执行版由 qc_daily_config.json 的 standard_version 指定（GB 1350—2009，限值待核对）。
-  预置值不得冒充当前执行版限值用于放行，见 standard_versions / standard_warning。
+★ 版本纪律（2026-11-11 切版）：解析出的数值属于 GB 1350—2009，即当前执行版。
+  该版限值已于 2026-11-11 对原文扫描件 180dpi 渲染逐格核对、经小崔复核签字后入库，
+  配置 qc_daily_config.json 的 standard_version 与之保持一致。
+  GB 1350—2025 是 2027-01-01 才实施的预置版，仍留在 limits.json 里供换版与历史追溯，
+  但不得用于判 2026 年的货。换版时改下面 STANDARD_KEY 一处即可（见
+  docs/GB1350_版本差异_2009vs2025.md ⑤-B）。
 """
 from __future__ import annotations
 
@@ -21,8 +24,8 @@ import re
 
 CORPUS_LIMITS = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "corpus", "limits.json")
-STANDARD_KEY = "GB1350-2025"
-PRESET_REF = "corpus/limits.json → GB1350-2025 → 表格 → 表1/表2 → 质量要求"
+STANDARD_KEY = "GB1350-2009"   # ⚠️ 2027-01-01 换 2025 版时只改这一行 + config 的 standard_version
+LIMITS_REF = "corpus/limits.json → GB1350-2009 → 表格 → 表1/表2 → 质量要求"
 DEFAULT_GRADE = "3"          # 语料「定等规则」：3 等为中等
 PRODUCT_TABLES = {"籼稻谷": "表1", "粳稻谷": "表2"}
 MANUAL_NOTE = "人工确认项：感官型指标，不参与数值判定"
@@ -112,8 +115,8 @@ def build_products(limits_doc: dict, grade: str = DEFAULT_GRADE) -> dict:
             "table": table_key,
             "scope": table.get("适用范围", []),
             "grade": grade,
-            "limits_basis": f"{standard} 预置（{PRESET_REF}），enabled=false；"
-                            f"当前执行版以 standard_version 为准，限值待人工核对",
+            "limits_basis": f"{standard} 当前执行版（{LIMITS_REF}）；"
+                            f"已逐格核对并经人工复核，standard_version 与本条一致",
             "items": items,
             "manual_checks": manual_checks,
         }

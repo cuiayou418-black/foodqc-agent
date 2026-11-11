@@ -447,9 +447,10 @@ def detect_type(sheet_name: str, mapping: dict) -> Optional[str]:
 def item_spec(config: QCDailyConfig, product: str, item: str) -> dict:
     """从配置取该产品该项目的限值/单位/方向/标准/出处。
 
-    ★ 版本门禁：当前执行版限值未人工核对时，products 里的 GB 1350—2025 数值只是预置副本，
-    禁止用它补齐导入数据 —— 否则就是「按新版判旧货」。此时只返回单位/方向/出处等元数据，
-    limit 留空，由人工核对后回填。
+    ★ 版本门禁（2026-11-11 切版后仍保留）：active_limits_verified=false 时，
+    products 里的数值只是未核对副本，禁止用它补齐导入数据 —— 否则就是拿没签字的数判货。
+    此时只返回单位/方向/出处等元数据，limit 留空，由人工核对后回填。
+    当前 GB 1350—2009 已核对签字（active_limits_verified=true），补齐走的是本版结构化限值。
     """
     for pname, spec in config.products.items():
         if pname == product or pname in product or product in pname:
@@ -559,7 +560,7 @@ def _check_version(rows: list, config: QCDailyConfig, notes: list, noted: set) -
                 notes.append(
                     f"【版本】表里「标准号」写的是 {used}，当前执行版是 {active}；"
                     "本批结论仅供复核，不得作为放行依据。限值仍取自表内、出处可逐行追溯，"
-                    "但版本是否适用须由化验室确认。")
+                    "表内限值列若沿用旧版数值，请逐项与本版结构化限值核对；版本是否适用须由化验室确认。")
             return
 
 
@@ -607,6 +608,15 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
         notes.append("下一步：把检测项目写进表头（如「水分含量」「出糙率」），或改成一行一项的长表")
     if is_wide_quality:
         notes.append(f"识别为宽表质检格式，已自动翻转 {len(item_cols)} 个检测项目列")
+        # 缺「等级」列时，分等级指标的限值按 limits_resolver.DEFAULT_GRADE（3 等）补齐。
+        # 以前这个默认值只藏在明细的「第3等」三个字里，读 headline 签字的人看不见
+        # （夜测 2026-11-11 r03 一般③）。拍板：不拒判（3 等是收购最低收储线，
+        # 按最宽松判说得通），但必须把默认了什么、怎么纠正，明写在一句话里。
+        if not any(("等级" in str(h) or "等别" in str(h)) for h in records[0].keys()):
+            notes.append(
+                "【等级】表里没有「等级 / 等别」列，分等级指标按 GB 1350—2009 "
+                "表1 第 3 等（中等）补齐限值；若这批按 1 / 2 等收购，"
+                "请补上等级列重传后再看结论。")
         dir_noted: set = set()   # 方向冲突提示按项目去重，别每行刷一遍
         batch_h = next((h for h, f in mapping.items() if f == "batch_id"), None)
         prod_h = next((h for h, f in mapping.items() if f == "product"), None)
@@ -724,7 +734,7 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
             if not row.get("limit_source"):
                 row["limit_source"] = spec.get("limit_source", "")
             if row.get("limit_value") is None:
-                reason = (f"当前执行版 {config.standard_version} 限值待人工核对，禁止用 2025 预置值补齐"
+                reason = (f"当前执行版 {config.standard_version} 限值未登记为已核对，禁止用 products 补齐"
                           if not config.active_limits_verified else
                           "请把该产品/项目加进 qc_daily_config.json 的 products")
                 notes.append(f"⚠️ {row.get('batch_id')}×{row.get('item')} 未取到限值（{reason}）")
@@ -742,7 +752,7 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
             notes.append(
                 f"【版本】表里「标准号」写的是 {used}，当前执行版是 {active}；"
                 "本批结论仅供复核，不得作为放行依据。限值仍取自表内、出处可逐行追溯，"
-                "但版本是否适用须由化验室确认。")
+                "表内限值列若沿用旧版数值，请逐项与本版结构化限值核对；版本是否适用须由化验室确认。")
         rows.append(row)
     _finalize_skip_notes(notes, skip_notes, skipped_lines, total_rows)
     if stats is not None:
@@ -803,8 +813,31 @@ def import_path(path: str, db_path: str, config: QCDailyConfig,
             except Exception as e:
                 summary["errors"].append(f"{os.path.basename(f)}: {e}")
                 continue
+            # 0 字节文件 read_tabular 直接返回 []，连一个 sheet 都没有；
+            # 只处理「sheet 内无记录」会把它整个漏掉（本次定点验证抓到）。
+            if not sheets:
+                try:
+                    size = os.path.getsize(f)
+                except OSError:
+                    size = -1
+                summary["notes"].append(
+                    f"{os.path.basename(f)}[—] 没有数据行（文件 {size} 字节）："
+                    + ("这个文件是空的，多半没传完整，请重传。" if size <= 0
+                       else "没读到工作表或数据行，请确认文件内容后重传。"))
+                continue
             for sheet_name, records in sheets:
                 if not records:
+                    # 空表 / 只有表头 / 0 字节：以前直接 continue，下游拿不到任何区分依据，
+                    # 只能给「可能是空表、只有表头、或者实测值读不懂」三选一
+                    # （夜测 2026-11-11 r05 一般②）。把字节数写进 note，让卡片说准病因。
+                    try:
+                        size = os.path.getsize(f)
+                    except OSError:
+                        size = -1
+                    summary["notes"].append(
+                        f"{os.path.basename(f)}[{sheet_name}] 没有数据行（文件 {size} 字节）："
+                        + ("这个文件是空的，多半没传完整，请重传。" if size <= 0
+                           else "只有标题行、没有数据，请补齐数据行后重传。"))
                     continue
                 mapping = map_headers(records)
                 ttype = detect_type(f"{os.path.basename(f)} {sheet_name}", mapping)

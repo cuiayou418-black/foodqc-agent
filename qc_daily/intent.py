@@ -71,7 +71,7 @@ def capability_answer() -> dict:
         "boundary": [
             "不放行、不签字、不替代人工复核",
             "不发邮件、不改源数据、不接真实批次与实测值",
-            "数据范围：DEMO-only 假批次；当前执行 GB 1350—2009，限值尚未人工核对",
+            "数据范围：DEMO-only 假批次；当前执行 GB 1350—2009，限值已逐格核对并经人工复核",
             "⚠️ 所有结论仅供复核，不得作为放行依据",
         ],
         "examples": [
@@ -147,6 +147,55 @@ _CONTAMINANTS = ("镉", "铅", "无机砷", "总砷", "砷", "汞", "铬", "黄�
 _CATEGORY = ("大米", "稻谷", "糙米", "粳米", "籼米", "米制品", "谷物", "小麦", "玉米",
              "大豆", "植物油", "油脂", "花生油", "菜籽油", "食用植物油")
 
+#: 业务范围边界：这些品类「查不到限值」不是「还没补国标」，是压根不归这套系统判。
+#: 出处：corpus/米粮标准清单_待核对.md「七、业务范围边界」（内部业务事实，非标准原文）。
+#: 玉米 / 大豆由小崔 2026-11-11 口述确认：厂里有，但属油化板块榨油原料，不是米粮部原粮。
+_BUSINESS_SCOPE = {"玉米": "油化", "大豆": "油化", "小麦": "不做"}
+
+#: 全品类限量表里常见的「与所问物类无关」的食品类别词。命中 ≥3 个就当整表处理，
+#: 不把 PDF 压平、栏位错位的原文整段贴给人（夜测 2026-11-11 r02 一般②）。
+_FOREIGN_TABLE_CATS = ("水产动物", "鱼类", "新鲜蔬菜", "食用菌", "松茸", "木耳",
+                       "肉类", "乳类", "蛋类", "水果", "坚果", "饮料", "调味品",
+                       "婴幼儿", "藻类", "贝类", "甲壳类", "罐头", "焙烤")
+
+
+def _business_scope_answer(cat: str) -> dict:
+    """「不归这套系统判」和「还没补国标」是两回事，别再劝人去补一份不该补的标准。
+
+    夜测 2026-11-11 r02 一般①：小麦的拒答把「不在业务范围」说成「库里还没收」，
+    还建议把对应国标逐格核对进 corpus/ —— 指着一条不该走的补料路线。
+    """
+    src = "corpus/米粮标准清单_待核对.md「七、业务范围边界」"
+    if _BUSINESS_SCOPE[cat] == "油化":
+        title = f"{cat}不归本系统的收录范围（属油化板块）"
+        lines = [
+            f"厂里确实有{cat}，但那是油化那边榨油用的原料，不在米粮部原粮验收范围内；"
+            f"本系统收录的是稻谷原粮验收与大米成品检验这套标准（业务范围见 {src}）。",
+            "所以这不是「库里少了一份国标」，也不是换个问法就能查到——"
+            "这条不该往 corpus/ 补，补了也不会有人拿它判货。",
+            f"要问{cat}的验收限值，请找油化那边的标准或对口的人；"
+            "我能查的是 GB 1350 稻谷原粮这套限值。",
+        ]
+    else:
+        title = f"{cat}不在本厂化验室的检验范围"
+        lines = [
+            f"化验室不测{cat}和面粉，这不在本厂检验范围内（{src} 记着 2026-10-16 的答复）；"
+            "GB/T 10361 那类标准只是流程上有参考意义，归 L3 参考层，不是本厂检验项目。",
+            "所以这项不用补国标进 corpus/——补了也不会有人拿它判货。",
+            "若只想了解方法，我可以说流程性标准放在哪；要限值判定，本系统不给。",
+        ]
+    return {
+        "title": title,
+        "lines": lines,
+        "boundary": [
+            "已收录：GB 1350 稻谷质量要求、GB 2716/2761/2762 已核对条目、检验方法与术语",
+            "范围外：玉米 / 大豆（油化榨油原料，非米粮部原粮验收）、小麦 / 面粉（本厂化验室不测）",
+            "待补：大米成品指标（GB/T 1354—2018）、GB 2762 尚未逐格核对的污染物限值",
+            "真实批次与实测值不进本系统",
+        ],
+        "examples": capability_answer()["examples"],
+    }
+
 
 def _present_para(para: str) -> str:
     """非表格段落：先洗掉 markdown 记号，再截断。
@@ -168,7 +217,17 @@ def _present_para(para: str) -> str:
     p = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", p)
     p = re.sub(r"`([^`]*)`", r"\1", p)
     p = re.sub(r"\s*\n\s*", " ", p).strip()
-    return p[:260]
+    if len(p) <= 260:
+        return p
+    # 硬切 260 字会切在半个词上（夜测 2026-11-11 r02：「木耳」被切成「木」，
+    # 尾巴还拖着半句「4. 4.」）。退到最近的句读或空格，并标明原文未完。
+    cut = p[:260]
+    for sep in ("。", "；", ";", "，", " "):
+        pos = cut.rfind(sep)
+        if pos >= 180:          # 别为了找句读把整段砍到只剩一句
+            cut = cut[:pos + 1] if sep in ("。", "；", ";") else cut[:pos]
+            break
+    return cut.rstrip("，, ") + "…（原文未完，出处见下）"
 
 
 def _must_entities(question: str) -> tuple[list[str], list[str]]:
@@ -220,7 +279,8 @@ def _ent_in(ent: str, text: str) -> bool:
 def _version_notice() -> str:
     """命中 GB 1350 语料时，把「当前执行哪一版」说清。
 
-    语料是已发布的 2025 版，配置里当前执行的是 2009 版且限值待人工核对。
+    2026-11-11 切版后，当前执行版 GB 1350—2009 的限值已逐格核对入库并经人工复核；
+    语料池里仍留着 2025 版原文归档（预置、2027-01-01 才实施），检索可能命中它。
     不给这句，答案贴着 2025 的数却没说它不能用来判今天的货（夜测 11-10 严重②）。
     """
     try:
@@ -232,7 +292,7 @@ def _version_notice() -> str:
         if not active and not preset:
             return ""
         tail = ("；" + "、".join(preset) + " 为预置、未到实施日期，不得用于判旧货") if preset else ""
-        return f"版本口径：当前执行 {active}（限值待人工核对，不得作为放行依据）{tail}"
+        return f"版本口径：当前执行 {active}（限值已逐格核对并经人工复核）{tail}"
     except Exception:
         return ""          # 配置读不到就别硬塞，宁可少一句也不编
 
@@ -252,21 +312,51 @@ def _mixed_quality_tables(question: str, hits: list[str]) -> bool:
 
 
 def _clarify_answer(question: str, must: list[str], cats: list[str]) -> dict:
-    """同一指标两张表、问题没说清物类 → 反问，不并列贴数、不替人挑一个。
+    """同一指标两张表、问题没说清物类 → 反问；说清了 → 给当前执行版那一格。
 
-    四条原则写死的是「低置信度强制转人工」。做「表号→物类映射表」是给检索不准
-    打补丁，多一张表就多一处会错的地方；并列贴两个数则是把选择权硬塞回化验员，
-    却装作系统已经答了。都不做（DECISIONS_2026-11-10 §1）。
+    2026-11-11 切版：GB 1350—2009 限值已逐格核对入库并经人工复核，
+    「确认后我再给」这句空头支票现在有地方兑现了。数值取自 corpus/limits.json
+    的结构化条目（build_products），不取自可能被 2025 原文归档污染的 md 片段。
+    分不清籼粳时仍不并列贴数、不替人挑一个（DECISIONS_2026-11-10 §1）。
     """
     item = "、".join(dict.fromkeys(must))[:24] or "这个指标"
     cat = f"（{cats[0]}）" if cats else ""
+
+    cultivar = "粳" if "粳" in question else ("籼" if "籼" in question else "")
+    if cultivar:
+        product, table = ("粳稻谷", "表2") if cultivar == "粳" else ("籼稻谷", "表1")
+        try:
+            from .limits_resolver import build_products, load_limits
+            items = build_products(load_limits(), grade="3")[product]["items"]
+            key = next((m for m in must if m in items), None)
+            if key is None:
+                key = next((t for t in indicators() if t in question and t in items), None)
+            if key:
+                spec = items[key]
+                return {
+                    "title": f"{product}「{key}」限值 · {spec['standard']} {table}",
+                    "lines": [
+                        f"{key}：{spec['expr']}{spec['unit']}（{table}，3 等口径）。",
+                        f"出处：{spec['limit_source']}。",
+                    ],
+                    "boundary": [b for b in [
+                        _version_notice(),
+                        "数值取自 corpus/limits.json → GB1350-2009 结构化条目，已逐格核对；语料片段摘录仍以原文为准",
+                        "真实批次与实测值不进本系统",
+                    ] if b],
+                    "examples": ["出糙率 3 等限值是多少", "把这张表做成今天的日报"],
+                }
+        except Exception:
+            pass          # 结构化限值取不到就落回反问，绝不编数
+
     return {
         "title": f"先确认物类，再给「{item}」{cat}的限值",
         "lines": [
-            f"GB 1350 里「{item}」分两张表：表1 是早籼 / 中晚籼 / 籼糯稻谷，"
-            "表2 是粳稻谷、粳糯稻谷，两表限值不同。",
-            "你验的是籼稻还是粳稻？确认后我再给对应那一格。",
-            "现在不并列贴两个数，也不替你挑一个 —— 挑错版本就是「按新版判旧货」，"
+            f"GB 1350 里「{item}」分两张表：表1 是早籼 / 晚籼 / 籼糯稻谷，"
+            "表2 是粳稻谷、粳糯稻谷，部分指标两表数值不同、部分相同。",
+            "你验的是籼稻还是粳稻？请把品种连着指标一起问，例如「籼稻谷水分限值是多少」，"
+            "我就给当前执行版对应那一格。",
+            "现在不并列贴两个数，也不替你挑一个 —— 挑错表就是拿错限值，"
             "这恰恰是最不该由系统代做的判断。",
         ],
         "boundary": [b for b in [
@@ -274,8 +364,6 @@ def _clarify_answer(question: str, must: list[str], cats: list[str]) -> dict:
             _version_notice(),
             "真实批次与实测值不进本系统",
         ] if b],
-        # 给的是业务动作，不是「换个问法系统就能答」的空承诺：
-        # 表2 原文抽出的是缺指标标签的数字流，贴出去比不贴更危险。
         "examples": ["先确认这批来料是籼稻还是粳稻",
                      "查化验室手册里这批的品种与定等依据",
                      "问班长当前执行的是 GB 1350 哪一版"],
@@ -323,6 +411,13 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
     scored: list[tuple[int, str, str]] = []
     if terms:
         for path in sorted(kb.CORPUS.glob("*.md")):
+            # ⚠️ 2026-11-11 切版：GB 1350—2025 原文归档是 2027-01-01 才实施的预置版，
+            # 它的表行里谷外糙米写 ≤4.0，与当前执行版 2009 的 ≤2.0 冲突。放它进检索池，
+            # 就会贴出「同一张卡里 2.0 与 4.0 并列」，甚至按新版判旧货（11-10 严重①）。
+            # 故整份排除出问答检索；文件仍留在 corpus/ 供 2027 换版与历史追溯，
+            # knowledge.scan_builtin() 也照常列出它。
+            if "GB1350-2025" in path.name:
+                continue
             text = kb._decode(path.read_bytes())
             # 文件级硬闸门：整份文件里都没有问题问的那个指标/污染物，
             # 这份文件的任何段落都不许拿来答（否则就会出现「问镉答铅」）。
@@ -372,12 +467,34 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
             clean = _present_para(para)
             if not clean:
                 continue
+            n_off = sum(1 for c in _FOREIGN_TABLE_CATS if c in clean)
+            if n_off >= 3:
+                # 拍板（2026-11-11）：不切句。目标表行可能不含被问实体，
+                # 按句过滤有把正确那行一起删掉的风险；宁可少给，不可给错。
+                # 折叠成一句能行动的话，符合「低置信度转人工」。
+                clean = (f"这里原本是 {name} 的一张全品类限量表（含 {n_off} 个与所问物类"
+                         "无关的食品类别）。原文是 PDF 表格压成的一段，栏位已错位，"
+                         "整表贴出来容易把别类的数抄成所问品类的值，所以我不贴；"
+                         "请核对 corpus/limits.json 里已逐格核对的结构化条目，或回原文对应表行。")
             hits.append(clean)
             if name not in sources:
                 sources.append(name)
 
+    # 2026-11-11 切版：GB 1350 双表限值问法改为「显式判品种」，不再靠检索命中嗅探。
+    # 2025 原文归档已排除出检索池，hits 不再天然同时含表1与表2，旧版
+    # _mixed_quality_tables 的前提没了；若仍只看命中，就会把表1的 13.5 当通用答案贴出去。
+    # 物类白名单挡住「大米的水分限值」这类本该拒答的问法（它 must 里也有水分含量）。
+    _LIMIT_WORDS = ("限值", "多少", "合格线", "几等", "限量", "上限", "下限")
+    _OTHER_CATS = ("大米", "糙米", "粳米", "籼米", "米制品", "小麦", "玉米", "大豆",
+                   "植物油", "油脂", "花生油", "菜籽油", "食用植物油")
+    if (any(w in question for w in _LIMIT_WORDS)
+            and any(m in indicators() for m in must)
+            and not any(c in _OTHER_CATS for c in cats)
+            and "2025" not in question):
+        return _clarify_answer(question, must, cats)
+
     if hits:
-        # 分不清籼粳就别给数：反问优先于贴一段「看着什么都答了」的整节原文。
+        # 兜底：万一语料以后又出现整节糊上来的情况，仍优先反问。
         if _mixed_quality_tables(question, hits):
             return _clarify_answer(question, must, cats)
         boundary = [f"出处：{', '.join(sources)}（corpus/ 只读，未生成结论）"]
@@ -391,8 +508,9 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
         if (any(w in question for w in ("限值", "多少", "合格线", "几等"))
                 and not any(any(ch in h for ch in ("≥", "≤", ">=", "<=")) for h in hits)):
             boundary.append("上面片段里有数字，但没有可逐格核对的表行结构；"
-                            "未核对原文前不能拿去判合格")
-        boundary.append("以上为语料片段摘录，限值数字仍须人工核对原文后方可用于判定")
+                            "请改用 corpus/limits.json 里已核对的结构化限值判定")
+        boundary.append("以上为语料片段摘录，未生成结论；限值以 corpus/limits.json 已核对的"
+                        "结构化条目为准，答复须带标准版本与表号")
         return {
             "title": "查到的相关条款",
             "lines": hits,
@@ -436,10 +554,15 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
     # 说成「这段语料里没有定义性文字」，更不能给一个写死的「出糙率」示例
     # —— 问水分的人按提示去问出糙率只会更糊涂（夜测 11-10 r02，4/4 分叉）。
     cat = cats[0] if cats else ""
+    # 范围外品类先分流：它们不是「还没补」，劝人补国标等于指着一条不该走的路。
+    if cat in _BUSINESS_SCOPE:
+        return _business_scope_answer(cat)
     scope = f"已收录范围里没有{cat}的这套限值" if cat else "没能定位到你要查的指标或物类"
     return {
-        "title": (f"库里没有能回答「{cat}」这个问法的段落" if cat
-                  else "这个问法，语料里还没有能直接引用的段落"),
+        # 标题说「这个问法」、正文说「不是换个问法就能查到」，同一张卡自己拆台
+        # （夜测 2026-11-11 r02 轻微④）。统一成陈述式，指向的是缺记录不是问法不好。
+        "title": (f"库里没有{cat}的限值记录" if cat
+                  else "库里没有能引用的限值记录"),
         "lines": [
             f"我把 corpus/ 下的国标和方法笔记翻了一遍：{scope}。"
             "这是收录范围的问题，不是换个问法就能查到。",
@@ -447,7 +570,8 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
             "要补：把对应国标原文逐格核对后放进 corpus/，或问班长当前执行的是哪一版。",
         ],
         "boundary": ["已收录：GB 1350 稻谷质量要求、GB 2716/2761/2762 已核对条目、检验方法与术语",
-                     "未收录：大米 / 玉米 / 大豆 / 小麦的成品指标，GB 2762 尚未逐格核对的污染物限值",
+                     "待补：大米成品指标（GB/T 1354—2018）、GB 2762 尚未逐格核对的污染物限值",
+                     "范围外：玉米 / 大豆（油化榨油原料）、小麦 / 面粉（本厂不测）——不是「还没补」",
                      "知识库支持在左栏上传文件；新资料先进待核对区，人工确认后才可用",
                      "真实批次与实测值不进本系统"],
         "examples": capability_answer()["examples"],
@@ -542,7 +666,7 @@ def route(question: str) -> dict | None:
                 "我不会对「能收吗」下放行结论——结论仅供复核，最终由人签字。",
             ],
             "boundary": ["真实批次号与实测值不能进本系统",
-                         "当前执行 GB 1350—2009，限值尚未人工核对"],
+                         "当前执行 GB 1350—2009，限值已逐格核对并经人工复核"],
             "examples": capability_answer()["examples"]}}
 
     # 其余（问术语、问区别、问依据、纯知识）→ 带出处的语料检索
