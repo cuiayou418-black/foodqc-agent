@@ -248,6 +248,44 @@ class SqlDataSource(BaseDataSource):
 
     source_type = "sql"
 
+    def _qc_record(self, r: dict, num) -> QCRecord:
+        """一行质检记录 → QCRecord，顺带做一次「表内版本 vs 当前执行版」的逐指标差分。
+
+        版本对眼此前只比「标准号」这个字符串，比完写一句「请逐项与本版核对」——
+        等于把 14 行的比对工作推回给人，可两版数值本来就在 limits.json 里。
+        实测：表内写 2025 版、谷外糙米 ≤4.0、实测 3.0，系统判「合格」，
+        而本版（2009）是 ≤2.0，这一项其实不合格（夜测 2026-11-12 r04 严重）。
+        这里比出来：结论会翻转的项直接不判，两个数一起写进出处。
+        """
+        value = num(r["value"])
+        conflict = ""
+        used = str(r.get("standard") or "").strip()
+        active = str(getattr(self.config, "standard_version", "") or "").strip()
+        if used and active and value is not None:
+            try:
+                if not getattr(self, "_limits_doc", None):
+                    from .limits_resolver import load_limits
+                    self._limits_doc = load_limits()
+                from .limits_resolver import version_conflict
+                conflict = version_conflict(
+                    self._limits_doc, used, active, str(r.get("item") or ""),
+                    str(r.get("product") or ""), value, str(r.get("direction") or ""))
+            except Exception:
+                conflict = ""      # 差分算不出来就不阻断：宁可少一句提示，也不改判定
+        limit_source = str(r.get("limit_source") or "")
+        if conflict:
+            limit_source = (f"{limit_source}｜⚠️ 版本不一致：{conflict}；"
+                            "本项不判，须由化验室确认适用版本" if limit_source
+                            else f"⚠️ 版本不一致：{conflict}；本项不判，须由化验室确认适用版本")
+        return QCRecord(
+            batch_id=r["batch_id"], product=r["product"], item=r["item"], value=value,
+            unit=r["unit"], direction=r["direction"], limit_value=num(r["limit_value"]),
+            standard=used, limit_source=limit_source,
+            verdict="", tested_at=r["tested_at"],
+            inspector=r.get("inspector", ""), lab=r.get("lab", ""),
+            source=r.get("source", "质检系统(SQL)"),
+            version_conflict=conflict)
+
     def _connect(self):
         cfg = self.config.source["sql"]
         driver = cfg.get("driver", "sqlite3")
@@ -303,13 +341,7 @@ class SqlDataSource(BaseDataSource):
             started_at=r["started_at"], finished_at=r["finished_at"],
             source=r.get("source", "生产系统(SQL)")) for r in prod_rows]
 
-        quality = [QCRecord(
-            batch_id=r["batch_id"], product=r["product"], item=r["item"], value=num(r["value"]),
-            unit=r["unit"], direction=r["direction"], limit_value=num(r["limit_value"]),
-            standard=r.get("standard", ""), limit_source=r.get("limit_source", ""),
-            verdict="", tested_at=r["tested_at"],
-            inspector=r.get("inspector", ""), lab=r.get("lab", ""),
-            source=r.get("source", "质检系统(SQL)")) for r in qual_rows]
+        quality = [self._qc_record(r, num) for r in qual_rows]
 
         warehouse = [WarehouseRecord(
             batch_id=r["batch_id"], warehouse=r["warehouse"], event=r["event"], qty=num(r["qty"]) or 0.0,

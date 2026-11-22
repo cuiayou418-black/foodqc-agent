@@ -72,20 +72,48 @@ def export_excel(m: DailyMetrics, data: CollectedData, meta: dict, path: str) ->
 
     pct = lambda x: f"{x * 100:.2f}%"
 
+    # 与 HTML 日报同源：没有生产记录时，「一次交验合格率 / 生产批次 / 异常批次」
+    # 这几个派生指标根本不可计算，不许印成 0.00% 或 0（夜测 2026-11-15 r04 严重：
+    # 同一 run 的 HTML 写「—（无生产记录）」、xlsx 写 0.00%，Excel 常被单独转发）。
+    # runner.py 会把 batch_pass_rate / abnormal_batches 直接改成字符串，这里先判类型再取数。
+    has_prod = m.batch_count > 0
+    na = "—（无生产记录）"
+
+    def _rate(v):
+        return v if isinstance(v, str) else (pct(v) if has_prod else na)
+
+    if isinstance(m.abnormal_batches, str):
+        abn_val, abn_note = m.abnormal_batches, "本批无生产记录，该指标不计算"
+    elif has_prod:
+        abn_val = len(m.abnormal_batches)
+        abn_note = (f"不合格 {sum(1 for b in m.abnormal_batches if b.level == 'critical')} · "
+                    f"预警 {sum(1 for b in m.abnormal_batches if b.level == 'warning')} · "
+                    f"提示 {sum(1 for b in m.abnormal_batches if b.level == 'info')}"
+                    f"；异常批次按批次计，当日另有 {len(m.alerts)} 条预警，见下行「预警条数」"
+                    "（两行口径不同，不是同一组数）")
+    else:
+        abn_val, abn_note = na, "本批无生产记录，该指标不计算"
+
     # ---- 1. 概览 ----
     ws = sheet("概览", f"{meta.get('title', '食用油中控品控日报')} · 核心指标", [22, 16, 60])
     header_row(ws, 4, ["指标", "数值", "说明"])
     rows = [
         ("总体合格率", pct(m.pass_rate), f"{m.total_tests - m.fail_tests}/{m.total_tests} 项次合格"),
-        ("一次交验合格率", pct(m.batch_pass_rate), "全部项目一次通过的批次占比"),
-        ("生产批次", m.batch_count, "当日投入生产并完成检测的批次数"),
-        ("计划产量(吨)", m.planned_qty, ""), ("实际产量(吨)", m.actual_qty, ""),
-        ("产量达成率", pct(m.achievement), ""),
+        ("一次交验合格率", _rate(m.batch_pass_rate),
+         "全部项目一次通过的批次占比" if has_prod else "本批无生产记录，该指标不计算"),
+        ("生产批次", m.batch_count if has_prod else na, "当日投入生产并完成检测的批次数"),
+        # 夜测 11-17 S1（累计第 6 晚）：has_prod 闸门原先只套相邻三行，
+        # 产量三项与批次列直接印 m.*，无生产记录时 Excel 是 0 / 0.00%，
+        # 同一 run 的 HTML 却是「—（无生产记录）」。Excel 会被单独转发，
+        # 签字人只看它就会读到「没数据＝没异常」的错结论。
+        ("计划产量(吨)", m.planned_qty if has_prod else na,
+         "本批无生产记录，该指标不计算" if not has_prod else ""),
+        ("实际产量(吨)", m.actual_qty if has_prod else na,
+         "本批无生产记录，该指标不计算" if not has_prod else ""),
+        ("产量达成率", _rate(m.achievement),
+         "本批无生产记录，该指标不计算" if not has_prod else ""),
         ("不合格项次", m.fail_tests, ""),
-        ("异常批次", len(m.abnormal_batches),
-         f"不合格 {sum(1 for b in m.abnormal_batches if b.level == 'critical')} · "
-         f"预警 {sum(1 for b in m.abnormal_batches if b.level == 'warning')} · "
-         f"提示 {sum(1 for b in m.abnormal_batches if b.level == 'info')}"),
+        ("异常批次", abn_val, abn_note),
         ("接近限值项次", m.near_limit_count, "限值利用率 ≥ 80%"),
         ("仓储环境超限", len(m.warehouse_violations), "库温/湿度超出配置范围"),
         ("预警条数", len(m.alerts),
@@ -111,12 +139,18 @@ def export_excel(m: DailyMetrics, data: CollectedData, meta: dict, path: str) ->
                        "一次交验合格率", "计划产量(t)", "实际产量(t)"])
     r = 5
     for p in m.products:
-        data_row(ws, r, [p.product, p.batches, p.total_tests, p.fail_tests, p.pass_rate,
-                         p.batch_pass_rate, p.planned_qty, p.actual_qty],
+        data_row(ws, r, [p.product, p.batches if has_prod else na,
+                         p.total_tests, p.fail_tests, p.pass_rate,
+                         _rate(p.batch_pass_rate),
+                         p.planned_qty if has_prod else na,
+                         p.actual_qty if has_prod else na],
                  fill=fail_fill if p.fail_tests else None, num_cols=(5, 6))
         r += 1
-    data_row(ws, r, ["合计", m.batch_count, m.total_tests, m.fail_tests, m.pass_rate,
-                     m.batch_pass_rate, m.planned_qty, m.actual_qty], num_cols=(5, 6))
+    data_row(ws, r, ["合计", m.batch_count if has_prod else na,
+                     m.total_tests, m.fail_tests, m.pass_rate,
+                     _rate(m.batch_pass_rate),
+                     m.planned_qty if has_prod else na,
+                     m.actual_qty if has_prod else na], num_cols=(5, 6))
     r += 3
     ws.cell(row=r - 1, column=1, value="分检测项目").font = Font(bold=True)
     header_row(ws, r, ["检测项目", "单位", "检测项次", "不合格项次", "合格率", "涉及批次", "", ""])
@@ -188,9 +222,14 @@ def export_excel(m: DailyMetrics, data: CollectedData, meta: dict, path: str) ->
                        "限值", "依据标准", "判定", "限值出处", "检测时间", "检验员", "利用率", "来源系统"])
     r = 5
     for rec in data.quality:
+        # importer 用「\u2063公式无结果:」占位没算出结果的 Excel 公式，整条 IF(...)
+        # 不该印在给使用人看的 Excel 里（夜测 2026-11-15 r04 轻微）。
+        inspector = rec.inspector
+        if isinstance(inspector, str) and ("公式无结果" in inspector or "\u2063" in inspector):
+            inspector = "—（公式未算）"
         data_row(ws, r, [rec.record_id, rec.batch_id, rec.product, rec.item, rec.value, rec.unit,
                          rec.direction, rec.limit_value, rec.standard, rec.verdict,
-                         rec.limit_source, rec.tested_at, rec.inspector, round(rec.ratio, 4), rec.source],
+                         rec.limit_source, rec.tested_at, inspector, round(rec.ratio, 4), rec.source],
                  fill=fail_fill if rec.verdict == "不合格" else None, num_cols=(5, 8, 14))
         r += 1
 
@@ -256,6 +295,17 @@ def _register_cn_font():
 
 
 def export_pdf(m: DailyMetrics, meta: dict, path: str) -> str:
+    # 与 Excel / HTML 同一套口径：无生产记录时派生指标不计算，
+    # 不许印 0.00% / 0 个（夜测 11-17 S1）。runner 可能把这些字段改成字符串，
+    # 所以格式化前先判类型，避免 f"{str:.2%}" 直接抛异常。
+    _has_prod = m.batch_count > 0
+    _na = "—（无生产记录）"
+
+    def _pct(v):
+        return v if isinstance(v, str) else f"{v:.2%}"
+
+    _abn = (m.abnormal_batches if isinstance(m.abnormal_batches, str)
+            else (f"{len(m.abnormal_batches)} 个" if _has_prod else _na))
     """导出 PDF 日报（A4，中文字体，页脚含报告指纹与页码）。返回文件路径。"""
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import A4
@@ -322,8 +372,10 @@ def export_pdf(m: DailyMetrics, meta: dict, path: str) -> str:
 
     # ---------- KPI ----------
     kpi = [["总体合格率", "一次交验合格率", "产量达成率", "异常批次", "当日预警"],
-           [f"{m.pass_rate:.2%}", f"{m.batch_pass_rate:.2%}", f"{m.achievement:.1%}",
-            f"{len(m.abnormal_batches)} 个", f"{len(m.alerts)} 条"]]
+           [_pct(m.pass_rate),
+            _pct(m.batch_pass_rate) if _has_prod else _na,
+            _pct(m.achievement) if _has_prod else _na,
+            _abn, f"{len(m.alerts)} 条"]]
     story.append(Spacer(1, 10))
     story.append(Table(kpi, colWidths=[36 * mm] * 5,
                        style=TableStyle([
@@ -341,13 +393,21 @@ def export_pdf(m: DailyMetrics, meta: dict, path: str) -> str:
     # ---------- 一、合格率 ----------
     story.append(Paragraph("一、合格率分析", st_h2))
     rows = [["产品", "批次", "检测项次", "不合格项次", "项目合格率", "一次交验", "计划(t)", "实际(t)"]]
+    # 同一 run 的 Excel / HTML 都已按 has_prod 分流，PDF 的合格率表也不能
+    # 把「无生产记录」印成 0 / 0.00%（夜测 11-17 S1 的第二处）。
     for p in m.products:
-        rows.append([p.product, p.batches, p.total_tests, p.fail_tests,
-                     f"{p.pass_rate:.2%}", f"{p.batch_pass_rate:.2%}",
-                     f"{p.planned_qty:g}", f"{p.actual_qty:g}"])
-    rows.append(["合计", m.batch_count, m.total_tests, m.fail_tests,
-                 f"{m.pass_rate:.2%}", f"{m.batch_pass_rate:.2%}",
-                 f"{m.planned_qty:g}", f"{m.actual_qty:g}"])
+        rows.append([p.product, p.batches if _has_prod else _na,
+                     p.total_tests, p.fail_tests,
+                     _pct(p.pass_rate),
+                     _pct(p.batch_pass_rate) if _has_prod else _na,
+                     f"{p.planned_qty:g}" if _has_prod else _na,
+                     f"{p.actual_qty:g}" if _has_prod else _na])
+    rows.append(["合计", m.batch_count if _has_prod else _na,
+                 m.total_tests, m.fail_tests,
+                 _pct(m.pass_rate),
+                 _pct(m.batch_pass_rate) if _has_prod else _na,
+                 f"{m.planned_qty:g}" if _has_prod else _na,
+                 f"{m.actual_qty:g}" if _has_prod else _na])
     story.append(Table(rows, colWidths=[42 * mm, 12 * mm, 17 * mm, 20 * mm, 20 * mm, 18 * mm, 16 * mm, 16 * mm],
                        style=table_style(extra=[("FONTNAME", (0, -1), (-1, -1), font),
                                                 ("BACKGROUND", (0, -1), (-1, -1), LIGHT)])))

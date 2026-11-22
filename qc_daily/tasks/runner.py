@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import hashlib
 import io
 import json
 import os
@@ -17,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import date
 from pathlib import Path
 
+from .. import readback as rb
 from ..agent import QCDailyAgent
 from ..config import QCDailyConfig
 from ..importer import import_path
@@ -41,24 +43,29 @@ def diagnose_missing_dates(dates: list, no_rows: bool, skipped: int = 0,
     「可能是空表」这种三选一猜测（夜测 11-10 r05：单行表上卡说没读出来、
     下卡说其余行照跑）。skipped/total 由 importer 的结构化 stats 传入。
     """
+    # 2026-11-15 白天修复：「改成数字后重传」把两种完全不同的写法说成一种。
+    # 「＜0.5」「未检出」「ND」「—」是合法写法（低于检出限），照字面改成 0.5 会把
+    # 结论从「不判」翻转成「合格」，改的正是原始记录，与「只读不写源数据」冲突
+    # （夜测 11-13/11-14/11-15 连续四晚）。下面两支分开说，且不再硬举四种写法。
+    _two_cases = ("分两种：① 写成「＜0.5」「未检出」「ND」「—」的是合法写法，"
+                  "系统现在不替你折算，请人工判这一项，不要为了上传改原始记录；"
+                  "② 真写错的（如「十三点二」这类中文数字、多打了空格）才改成 13.2 "
+                  "这样的阿拉伯数字后重传。日期列本身没问题，不要改日期。")
     if no_rows and skipped and total and skipped >= total:
-        return (f"表里读到 {total} 行数据，但 {skipped} 行的实测值读不懂"
-                "（「＜0.5」「未检出」「—」这类写法），一行都没进判定，本次没跑。",
-                "下一步：把下方提醒里点名的那几行实测值改成数字后重传"
-                "（中文数字请写成 13.2 这样的阿拉伯数字）；"
-                "日期列本身没问题，不要改日期。",
+        return (f"表里读到 {total} 行数据，但 {skipped} 行的实测值读不懂，"
+                "一行都没进判定，本次没跑。下方提醒里点名了具体哪几行、原值是什么。",
+                "下一步：" + _two_cases,
                 "values_unreadable")
     if no_rows and skipped:
         return (f"表里读到 {total} 行数据，其中 {skipped} 行的实测值读不懂；"
                 "其余行也没能形成可判定记录，本次没跑。",
-                "下一步：按下方提醒逐行核对实测值写法；日期列本身没问题。",
+                "下一步：按下方提醒逐行核对实测值写法；" + _two_cases,
                 "values_unreadable")
     if no_rows:
         return ("这张表一行可判定的记录都没读出来（可能是空表、只有表头，"
                 "或者「实测值」整列都读不懂）。没有可判定的记录，本次没跑。",
-                "下一步：确认表里有数据行；实测值要写数字——「未检出」「—」「＜0.5」"
-                "这类现在会整行跳过，中文数字请写成 13.2 这样的阿拉伯数字，"
-                "原值会列在下方提醒里。",
+                "下一步：确认表里有数据行；实测值要能读成数字，"
+                "原值会列在下方提醒里。" + _two_cases,
                 "no_rows")
     return ("表里读到了数据行，但一条检验日期都没读出来"
             "（日期列可能是公式没存计算结果，或格式认不出）。",
@@ -117,6 +124,9 @@ class TaskRunner:
 
     def __init__(self, config: QCDailyConfig | None = None):
         self.config = config or QCDailyConfig.load()
+        # 收尾做副作用断言用：run_id → 运行前的只读源哈希快照。
+        # 放在实例上而不塞进 TaskResult，是为了不动 summary.json 的既有字段结构。
+        self._source_snapshots: dict[str, dict] = {}
 
     # ---------------------------------------------------------------- 留痕
     @staticmethod
@@ -147,6 +157,8 @@ class TaskRunner:
         res = TaskResult(run_id=run_id, task_id=req.task_id, report_date=req.report_date,
                          started_at=iso_now(), run_dir=str(run_dir))
         _RUNS[run_id] = res
+        # 运行前先拍只读源快照；收尾比对「不该变的是否变了」。
+        self._source_snapshots[run_id] = rb.snapshot_sources(ROOT)
 
         try:
             req.save(str(run_dir / "request.json"))
@@ -158,8 +170,13 @@ class TaskRunner:
 
             ctx = self._collect_context(req, run_dir, res)
             if res.status in TERMINAL:
+                if res.status == "failed":
+                    self._leave_failure_evidence(run_dir, res, ctx)
                 return self._finish(req, res, run_dir, ctx)
 
+            # 判读前先落应产声明（心跳 11/17 第 2 条）：没有它，「没适用工作」
+            # 和「该判的没拿到」在报表上长得一模一样。只写声明，不参与判定。
+            self._declare_expected(run_dir, res, ctx, req)
             ctx = self._execute(req, run_dir, res, ctx)
             # partial / pending_review 都要继续出 8 块报告：录入自查任务几乎总是
             # pending_review，若在这里提前收尾就不会有 report.html（4.4 缺一块算未完成）。
@@ -184,6 +201,108 @@ class TaskRunner:
                              "输入表与快照已保留，可修正后重跑。")
             self._trace(res, "failed", "exception", f"{type(e).__name__}: {str(e)[:300]}")
             return self._finish(req, res, run_dir, {})
+
+    def _declare_expected(self, run_dir: Path, res: TaskResult, ctx: dict,
+                          req=None) -> dict:
+        """判读前落「应产声明」：本轮应检查多少项、输入指纹、应出哪些产物。
+
+        11/17 心跳汇总第 2 条。为什么必须有它：没有声明时，「本来就没东西可判」
+        和「有东西该判但没拿到」在报表上长得一模一样，都会被记成「没检出异常」。
+        声明只在判读前写一次，收尾时核对，不参与判定、不改 status。
+        """
+        inputs_dir = run_dir / "inputs"
+        h = hashlib.sha256()
+        files = sorted(p for p in inputs_dir.iterdir() if p.is_file()) if inputs_dir.is_dir() else []
+        for f in files:
+            h.update(f.name.encode("utf-8"))
+            h.update(f.read_bytes())
+
+        rows = ctx.get("import_rows") or {}
+        checks = 0
+        if isinstance(rows, dict):
+            checks = sum(int(v) for v in rows.values()
+                         if isinstance(v, (int, float)) and not isinstance(v, bool))
+        elif isinstance(rows, (int, float)):
+            checks = int(rows)
+
+        # 声明「应产格式」而非硬编码文件名：将来产物改名也不会误报缺失。
+        # report.html 是最小硬约束（4.4），其余按后缀核对。
+        formats = list(getattr(req, "formats", []) or []) if req is not None else []
+
+        decl = {
+            "report_date": res.report_date,
+            "run_id": res.run_id,
+            "task_id": res.task_id,
+            "input_fingerprint": "sha256:" + h.hexdigest()[:16],
+            "input_files": [f.name for f in files],
+            "expected_checks": checks,
+            "expected_formats": formats,
+            "expected_outputs": ["report.html"],
+            "declared_at": iso_now(),
+            "_rule": "应产为空→无适用工作；应产非空而回执空→失败；声明缺失→判不了",
+        }
+        (run_dir / "expected_manifest.json").write_text(
+            json.dumps(decl, ensure_ascii=False, indent=2), encoding="utf-8")
+        ctx["expected_manifest"] = decl
+        return decl
+
+    def _check_declaration(self, run_dir: Path, res: TaskResult, ctx: dict) -> dict:
+        """收尾核对：声明缺失 / 应产落空都如实记 UNKNOWN，不降级成 PASS。"""
+        f = run_dir / "expected_manifest.json"
+        if not f.is_file():
+            return {"state": "UNKNOWN", "reason": "没有判读前的应产声明，不能判断是否跑全"}
+        try:
+            decl = json.loads(f.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            return {"state": "UNKNOWN", "reason": f"应产声明读不出来：{type(e).__name__}"}
+        declared = list(decl.get("expected_outputs") or [])
+        actual = set(res.outputs or [])
+        missing = [x for x in declared if x not in actual]
+        suffix_map = {"html": ".html", "pdf": ".pdf", "excel": ".xlsx",
+                      "xls": ".xls", "csv": ".csv", "txt": ".txt", "eml": ".eml"}
+        missing_formats = [f for f in (decl.get("expected_formats") or [])
+                           if not any(x.lower().endswith(suffix_map.get(f, "." + f))
+                                      for x in actual)]
+        if not declared and not ctx.get("import_rows"):
+            state, reason = "NO_APPLICABLE_WORK", "本轮无应产项，不是「检过了没事」"
+        elif missing or missing_formats:
+            state, reason = "UNKNOWN", "应产未落全：" + "/".join(missing + missing_formats)
+        else:
+            state, reason = "PASS", "应产产物全部落盘"
+        return {"state": state, "reason": reason,
+                "declared": declared, "declared_formats": decl.get("expected_formats") or [],
+                "actual": sorted(actual),
+                "expected_checks": decl.get("expected_checks"),
+                "input_fingerprint": decl.get("input_fingerprint")}
+
+    def _leave_failure_evidence(self, run_dir: Path, res: TaskResult, ctx: dict) -> None:
+        """导入层判死也要留下可查的现场（夜测 11-17 G-2，复发第 4 晚，6/6）。
+
+        失败 run 在 _collect_context 里提前 return，跳过了成功路径的 snapshots/
+        复制和 audit_entry.json 写入，事后只能翻 trace 才知道今天拒了几张表。
+        这里只写**本次 run 目录内**的留痕，不往全局 audit.jsonl 塞条目
+        （那是引擎审计流，失败任务引擎根本没启动，塞进去会混淆口径）。
+        """
+        try:
+            src = run_dir / "inputs"
+            if src.is_dir():
+                shutil.copytree(str(src), str(run_dir / "snapshots"), dirs_exist_ok=True)
+                ctx["snapshot_dir"] = "snapshots/"
+            f = run_dir / "audit_entry.json"
+            if not f.exists():
+                f.write_text(json.dumps({
+                    "run_id": res.run_id,
+                    "report_date": res.report_date,
+                    "status": "failed",
+                    "scope": "import_layer",
+                    "errors": [str(e) for e in res.errors],
+                    "notes": [str(n) for n in res.notes[:5]],
+                    "at": iso_now(),
+                    "note": "导入层判死，引擎未启动；此条由 runner 失败收尾时写入，非引擎审计",
+                }, ensure_ascii=False, indent=2), encoding="utf-8")
+        except OSError:
+            # 留痕写不进去不能盖掉原本的导入错误；trace 里已有失败事件可追。
+            pass
 
     # ---------------------------------------------------------------- 输入装载（纠偏 2）
     def _collect_context(self, req: TaskRequest, run_dir: Path, res: TaskResult) -> dict:
@@ -275,6 +394,19 @@ class TaskRunner:
                 msg = f"表里没读到数据行：{detail}"
                 nxt = "下一步：确认文件传完整、且除标题行外有数据行，然后重传；不要改检验日期。"
                 res.notes.extend(empty_notes[:2])
+            # 把本次真正跳过的原值带进 headline。BD-09（＜0.5）与 BD-10（十三点二）
+            # 的 errors[0] 原本逐字相同，/tasks 右栏按未截断原文折叠时会被合成「×2」，
+            # 两种病看不出来（夜测 11-15 r05 一般④）。折叠键用的是 errors[0]，
+            # 所以在源头区分，不放宽折叠口径。
+            raw_samples = [str(n).split("实测值「", 1)[1].split("」", 1)[0]
+                           for n in summary["notes"]
+                           if "实测值「" in str(n) and "」" in str(n)]
+            if code == "values_unreadable" and raw_samples:
+                # 旧版只点前 2 个原值还带「字节数」噪音，第 3 个起悄悄消失，
+                # 签字人以为只有 2 行有问题（夜测 11-21 r03 M7）。全列 + 报总数。
+                _sample_text = "、".join(raw_samples)
+                msg = (f"{msg}（本次读不懂的原值共 {len(raw_samples)} 处："
+                       f"{_sample_text}）")
             res.errors.append(msg)
             res.notes.append(nxt)
             self._trace(res, "failed", code,
@@ -374,8 +506,13 @@ class TaskRunner:
             # 只报个数不说哪几行，混合表里人不知道该改哪儿
             # （夜测 2026-11-11 r05 轻微④）。
             res.errors.append(f"只接 DEMO 假数据：发现非 DEMO- 前缀的批次号（{shown}），拒绝执行")
-            res.notes.append("下一步：把上面点名的真实批次号换成 DEMO- 假批次后重跑，"
-                             "真实批次与实测值不进本系统。")
+            # 别再说「不进本系统」：trace 的顺序是写库→拷原文件→导入→才拒绝，
+            # 真实批号、检验员、实测值此刻已经躺在 runs/<run_id>/ 里了
+            # （夜测 2026-11-12 r05 一般②）。改成不撒谎、且给出下一步的说法。
+            res.notes.append("下一步：请不要只把批号改成 DEMO- 前缀就重传——"
+                             "值一个没动，等于把真实实测值当演示数据跑，系统分辨不出来。"
+                             "要试流程请用系统内置的 DEMO-001 假数据。上传的原文件与解析结果"
+                             "已留在本机 runs/<run_id>/ 供出错复盘，不需要时可删除。")
             self._trace(res, "failed", "real_batch_rejected",
                         f"{len(uniq)} 个非 DEMO 批次：{shown}")
         return not bad
@@ -591,10 +728,16 @@ class TaskRunner:
             ctx["outputs"] = ctx.get("outputs") or ["answer.txt"]
             return                          # ask_qa 明确不出 8 块报告
 
+        # 报告是终态产物，第 1 节不能写「正在生成报告」。渲染时 res.status 已被
+        # _state(...,"rendering",...) 改成中间态，真正的 done 要到 _finish 才置——
+        # 于是终态文件永久印着"正在生成报告"（夜测 11-20 r03 / 11-21 r04 轻微，第 3 晚）。
+        # 这里用「已定的终态 + 缺省 done」预估，与 _finish 的判定一致：
+        # degraded（partial/pending_review）优先，否则本次跑完即 done。
+        _display_status = degraded or ("done" if res.status not in TERMINAL else res.status)
         ctx.update({
             "task_id": req.task_id, "run_id": res.run_id,
             "title": spec.name, "started_at": res.started_at,
-            "finished_at": iso_now(), "status": degraded or res.status,
+            "finished_at": iso_now(), "status": _display_status,
             "data_range": req.report_date,
             "input_digest": ctx.get("input_digest", ""),
             "data_checksum": ctx.get("data_checksum", ""),
@@ -631,7 +774,11 @@ class TaskRunner:
         flagged: set[tuple[str, str]] = set()
         for v in (ctx.get("verdicts") or []):
             key = (str(v.get("batch_id", "")), str(v.get("item", "")))
-            src = f"{v.get('standard','')} {v.get('limit_source','')}".strip()
+            # 输入表「限值出处」列常以标准号开头，直接拼就成了
+            # 「GB 1350—2025 GB 1350—2025 表1 第3等…」（11-08 轻微，复发 3 次）。
+            _std = str(v.get("standard", "") or "").strip()
+            _src = str(v.get("limit_source", "") or "").strip()
+            src = (_src if _src.startswith(_std) else f"{_std} {_src}".strip()) if _std else _src
             line = (f"{v.get('batch_id','')} · {v.get('item','')} "
                     f"{v.get('direction','')}{v.get('limit_value','')} → "
                     f"实测 {v.get('value','')} → 代码判定「{v.get('verdict','')}」"
@@ -666,7 +813,8 @@ class TaskRunner:
                       "只摆事实与待复核原因，需人工复核签字")
         uncovered.append("感官项「色泽、气味」：人工确认项，不参与数值判定")
         uncovered.append("其它等级（1/2/4/5 等）、粳稻谷表2：本任务未覆盖")
-        uncovered.append("数据范围：DEMO-only 假批次，真实批次与实测值不进本系统")
+        uncovered.append("数据范围：只按批号前缀判断 DEMO 假数据；系统无法分辨实测值真假，"
+                         "请勿用改批号的方式上传真实数据（改号后报告里的值仍是你上传的原值）")
         return {"已确认": confirmed, "待人工复核": review, "未覆盖": uncovered}
 
     def _checkpoints(self, ctx: dict, res: TaskResult) -> list[dict]:
@@ -705,9 +853,34 @@ class TaskRunner:
             res.input_digest = ctx.get("input_digest", "")
         payload = res.to_dict()
         payload["digest_notes"] = DIGEST_NOTES
+        # 应产声明核对：只写证据，不改 status —— 失败/待复核任务本来就缺产物，
+        # 记 UNKNOWN 是预期，不该再往 errors 里塞噪音。
+        payload["declaration_check"] = self._check_declaration(run_dir, res, ctx)
+        # 2026-11-13 产物回读：status=done 不算数，要把产物、回执、账本读回来核。
+        # 副作用断言一并做：只读源一个字节都不该被这次任务改动。
+        before = self._source_snapshots.pop(res.run_id, {})
+        try:
+            report = rb.verify_run(run_dir, res.outputs, before, payload)
+        except Exception as e:  # 回读自身出错也要留痕，绝不静默当通过
+            report = {"overall": "UNKNOWN",
+                      "reason": f"回读自身异常：{type(e).__name__}: {str(e)[:200]}"}
+        payload["readback"] = report
+        # 只有 FAIL（只读源真被动过）才追加到 errors。
+        # UNKNOWN 多发生在失败/待复核任务（本来就没产物），再塞一条会把真错因淹掉。
+        if report.get("overall") == "FAIL":
+            payload["errors"] = list(payload.get("errors") or []) + [
+                f"产物回读未通过：{report.get('reason', '')}"]
         (run_dir / "summary.json").write_text(
             json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True),
             encoding="utf-8")
+        # 失败 / 待复核的任务别加这条事件：index_runs 从 trace 末尾取「终态短码」，
+        # 多一条 readback 会把真正的错因顶掉（任务卡上会显示 readback 而不是缺限值）。
+        if res.status not in ("failed", "partial", "pending_review"):
+            self._trace(res, res.status, "readback",
+                        f"overall={report.get('overall')} "
+                        f"artifacts={report.get('denominator', {}).get('landed', '?')}"
+                        f"/{report.get('denominator', {}).get('declared', '?')}"
+                        f" side_effects={report.get('side_effects', {}).get('overall', '?')}")
         self._trace(res, res.status, "finished",
                     f"status={res.status} outputs={len(res.outputs)}")
         _RUNS[res.run_id] = res

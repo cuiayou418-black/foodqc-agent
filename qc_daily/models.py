@@ -96,6 +96,10 @@ class QCRecord:
     record_id: str = ""
     source: str = ""
     extracted_at: str = ""
+    #: 表内标准号与本系统当前执行版不一致、且两版结论会翻转时，这里写清两个数。
+    #: 非空 → 该项不判（转人工确认适用版本），因为「按表内那版判合格」
+    #: 等于放行本版不合格的粮（夜测 2026-11-12 r04 严重）。
+    version_conflict: str = ""
 
     def __post_init__(self):
         if not self.record_id:
@@ -108,6 +112,11 @@ class QCRecord:
             self.verdict = "不判"
         else:
             self.verdict = "合格" if compare(self.value, self.limit_value, self.direction) else "不合格"
+            # 版本冲突只把「合格」降成「不判」：按表内那版合格、按本版不合格，
+            # 是这套系统唯一会「放行不该放的粮」的方向。反过来的「不合格」照旧保留
+            # —— 按本版不合格就是不合格，不受版本影响，不必再吓人。
+            if self.version_conflict and self.verdict == "合格":
+                self.verdict = "不判"
 
     @property
     def ratio(self) -> float:
@@ -127,6 +136,7 @@ class QCRecord:
             "limit_value": self.limit_value, "standard": self.standard, "limit_source": self.limit_source,
             "verdict": self.verdict, "tested_at": self.tested_at, "inspector": self.inspector,
             "lab": self.lab, "ratio": round(self.ratio, 4),
+            "version_conflict": self.version_conflict,
             "source": self.source, "extracted_at": self.extracted_at,
         }
 
@@ -339,6 +349,9 @@ class DailyMetrics:
     trend_points: list = field(default_factory=list)          # List[TrendPoint]
     item_trend: list = field(default_factory=list)            # List[ItemTrendPoint]
     trend_summary: dict = field(default_factory=dict)         # {direction, slope, wow_delta, comment}
+    # 当日唯一口径：history 里当日全部 run 合并（只供展示，审计仍写本次 run）。
+    # 没有 history 时（如单测直接构造 DailyMetrics）为空 dict，读取方需容错。
+    daily_rollup: dict = field(default_factory=dict)
 
     # 预警与校验
     alerts: list = field(default_factory=list)                # List[Alert]

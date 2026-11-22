@@ -26,12 +26,31 @@ def resolve_run_dir(run_id: str, output_root: str = "runs") -> Path:
     return d
 
 
+#: 产物白名单的唯一口径。resolve_artifact（直链下载）与 list_artifacts（列表）
+#: 必须共用它——早先直链只查「路径在不在 run 目录内」，不查「是不是产物」，
+#: 于是被红线拒绝的 run，其 inputs/ 原表、snapshots/ 快照、input.db、request.json
+#: 全部可以无鉴权直链取走，甚至把 C:\Users\… 本机路径一起给出去
+#: （夜测 11-19 r05 立账、11-21 r05/r06 复验，连续 3 晚的严重项）。
+#: 这些文件是「复盘素材」，不是给人下载的产物；审计自己用磁盘路径读，不走这层。
+_SKIP_DIRS = {"inputs", "snapshots"}
+_SKIP_FILES = {"input.db", ".DS_Store", "request.json", "audit_entry.json", "trace.jsonl"}
+
+
+def _is_artifact(rel: str) -> bool:
+    """相对 run 目录的路径是否属于「可下载产物」。两个入口共用这道闸。"""
+    parts = rel.replace("\\", "/").split("/")
+    return parts[0] not in _SKIP_DIRS and rel not in _SKIP_FILES
+
+
 def resolve_artifact(run_id: str, name: str, output_root: str = "runs") -> Path:
-    """产物必须落在 <output_root>/<run_id>/ 内；只接受本次运行已登记的文件名。"""
+    """产物必须落在 run 目录内，且属于可下载产物；复盘素材一律拒绝。"""
     run_dir = resolve_run_dir(run_id, output_root)
     target = (run_dir / name).resolve()
     if run_dir != target and run_dir not in target.parents:
         raise ValueError("产物路径越界（目录穿越被拒绝）")
+    rel = target.relative_to(run_dir).as_posix()
+    if not _is_artifact(rel):
+        raise ValueError("这不是可下载产物（上传原件 / 快照 / 输入库仅供本机复盘）")
     if not target.is_file():
         raise FileNotFoundError(name)
     return target
@@ -43,16 +62,11 @@ def list_artifacts(run_id: str, output_root: str = "runs") -> list[dict]:
     if not run_dir.is_dir():
         return []
     out = []
-    # 用户上传的原表 / 采集快照 / 输入库都不是「产物」。旧版 rglob 全列，
-    # 失败任务会把那份坏 .xlsx 当成「下载 Excel 表」递回去（夜测 M3）。
-    skip_dirs = {"inputs", "snapshots"}
-    skip_files = {"input.db", ".DS_Store"}
     for p in sorted(run_dir.rglob("*")):
         if not p.is_file():
             continue
         rel = p.relative_to(run_dir).as_posix()
-        parts = rel.split("/")
-        if parts[0] in skip_dirs or rel in skip_files:
+        if not _is_artifact(rel):
             continue
         out.append({"name": rel, "size": p.stat().st_size,
                     "kind": p.suffix.lstrip(".") or "file"})

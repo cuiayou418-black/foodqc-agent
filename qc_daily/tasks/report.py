@@ -88,7 +88,9 @@ padding:11px 14px;font-weight:700;text-align:center}
         ("执行起止", f"{ctx.get('started_at','')} ~ {ctx.get('finished_at','')}"),
         ("数据源类型", ctx.get("source_type", "")),
         ("数据时间范围", ctx.get("data_range", "")),
-        ("状态", ctx.get("status", "")),
+        ("状态", {"queued": "排队中", "running": "正在执行", "rendering": "正在生成报告",
+                  "done": "做完了", "failed": "没做", "rejected": "按规矩停下"}.get(
+                      str(ctx.get("status", "")), str(ctx.get("status", "")))),
     ]))
 
     # ---- 2 输入清单 ----
@@ -118,6 +120,7 @@ padding:11px 14px;font-weight:700;text-align:center}
                  s.get("建议动作", "")) for s in (ctx.get("suspects") or [])]))
 
     # ---- 4 指标汇总 ----
+    _trend = metrics.get("trend") or []
     add("<h2>4. 指标汇总</h2>")
     add(_table(["指标", "值"], [
         ("总体合格率", _pct(metrics.get("pass_rate"))),
@@ -126,7 +129,8 @@ padding:11px 14px;font-weight:700;text-align:center}
         ("质检项次 / 不合格项次",
          f"{metrics.get('total_tests','-')} / {metrics.get('fail_tests','-')}"),
         ("缺陷分布", "；".join(f"{d}×{n}" for d, n in (metrics.get("defect_distribution") or {}).items()) or "-"),
-        ("近 N 日趋势", "；".join(str(x) for x in (metrics.get("trend") or [])) or "-"),
+        (f"近 {len(_trend)} 日趋势" if _trend else "历史趋势",
+         "；".join(str(x) for x in _trend) if _trend else "无历史数据"),
         ("命中预警", "；".join(str(x) for x in (metrics.get("alerts") or [])) or "-"),
     ]))
 

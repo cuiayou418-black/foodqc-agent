@@ -76,6 +76,51 @@ class HistoryStore:
 
 # ------------------------------------------------------------------ 指标计算
 
+def daily_rollup(entries: list, day: str) -> dict:
+    """把某一天的全部 run 合并成唯一口径（趋势与「当日」展示的唯一数据源）。
+
+    背景：history.jsonl 是 JSONL 追加写，同一天会有多条（多次上传、巡检探针、
+    补录）。旧代码 `by_date[d] = e` 无条件覆盖只取最后一条，于是：
+      · 同一天三张纸给三个合格率（11-21 r03/r04 的 85.71% vs 100%）；
+      · 最后写入的常是巡检 1 项探针，把当天 170 项真值洗成 100%（第 9 晚严重）。
+    合并规则（项次口径，不动判定）：
+      · total_tests / fail_tests / near_limit_count / abnormal_batch_count 相加；
+      · pass_rate 用合并后的 total、fail 重算，绝不取各 run 比率的平均；
+      · item_fail 逐指标累加；item_mean 按各自 total_tests 加权；
+      · run_count 记这一天有几条，供展示层标「当日 N 次运行合并」。
+    这是**展示口径**，只喂趋势与「当日」卡片；审计 history 仍写本次 run 原始值，
+    两条管道分开，避免合并值被二次写回 history 滚雪球。
+    """
+    same = [e for e in entries if str(e.get("report_date") or "") == day]
+    if not same:
+        return {"report_date": day, "pass_rate": 0.0, "total_tests": 0,
+                "fail_tests": 0, "abnormal_batch_count": 0, "near_limit_count": 0,
+                "item_fail": {}, "item_mean": {}, "run_count": 0}
+    total = sum(int(e.get("total_tests") or 0) for e in same)
+    fail = sum(int(e.get("fail_tests") or 0) for e in same)
+    item_fail: dict[str, int] = {}
+    item_weighted: dict[str, list] = {}   # item -> [sum(value*count), sum(count)]
+    for e in same:
+        for it, c in (e.get("item_fail") or {}).items():
+            item_fail[str(it)] = item_fail.get(str(it), 0) + int(c or 0)
+        means = e.get("item_mean") or {}
+        n = int(e.get("total_tests") or 0)
+        for it, v in means.items():
+            w = item_weighted.setdefault(str(it), [0.0, 0])
+            w[0] += float(v) * n
+            w[1] += n
+    return {
+        "report_date": day,
+        "pass_rate": round((total - fail) / total, 4) if total else 0.0,
+        "total_tests": total, "fail_tests": fail,
+        "abnormal_batch_count": sum(int(e.get("abnormal_batch_count") or 0) for e in same),
+        "near_limit_count": sum(int(e.get("near_limit_count") or 0) for e in same),
+        "item_fail": item_fail,
+        "item_mean": {it: round(w[0] / w[1], 4) for it, w in item_weighted.items() if w[1]},
+        "run_count": len(same),
+    }
+
+
 def compute_metrics(collected: CollectedData, config: QCDailyConfig,
                     history: list) -> DailyMetrics:
     """由原始记录计算日报全部指标。"""
@@ -202,22 +247,30 @@ def compute_metrics(collected: CollectedData, config: QCDailyConfig,
     m.abnormal_batches = sorted(abnormal, key=lambda b: (-b.worst_ratio, b.batch_id))
 
     # ---------- 5. 趋势分析 ----------
-    # 历史按日期去重（同一日期多次运行只取最后一次），再截取最近 trend_days-1 天
-    by_date: dict[str, dict] = {}
-    for e in history:
-        if e.get("report_date") != m.report_date:
-            by_date[e["report_date"]] = e
-    hist_entries = [by_date[d] for d in sorted(by_date)][-(trend_days - 1):]
+    # 本次 run 的原始条目（审计 / 本次明细仍用它，绝不写回 history 参与累加）。
     today_entry = {
         "report_date": m.report_date, "pass_rate": round(m.pass_rate, 4),
         "total_tests": m.total_tests, "fail_tests": m.fail_tests,
         "abnormal_batch_count": len(m.abnormal_batches),
+        "near_limit_count": m.near_limit_count,
         "item_fail": {it.item: it.fail for it in m.items},
         "item_mean": _item_means(collected),
     }
-    # 当日无条件追加在末尾时，补录/回溯日期（化验室常态）会排在最新日之后，
-    # 网页趋势错序、Excel 导出却是对的（exporters.py 用了 sorted）——两处口径不一致。
-    series = sorted(hist_entries + [today_entry],
+    # 当日唯一口径：history 里所有「今日」条目 + 本次 run 一起合并。
+    # 早先今日取本次、往日取最后一条，同一天三张纸三个数（11-21 r03/r04 铁证），
+    # 且最后写入的一张常是巡检 1 项探针，把 170 项真值洗成 100%（第 9 晚严重）。
+    # 现在同日 run 全部相加重算比率，趋势与「当日」卡片都读这一份。
+    m.daily_rollup = daily_rollup(history + [today_entry], m.report_date)
+    # 历史（不含今日）按日期合并，再截取最近 trend_days-1 天。
+    hist_by_date: dict[str, list] = {}
+    for e in history:
+        d = e.get("report_date")
+        if d and d != m.report_date:
+            hist_by_date.setdefault(d, []).append(e)
+    hist_entries = [daily_rollup(es, d) for d, es in sorted(hist_by_date.items())]
+    hist_entries = hist_entries[-(trend_days - 1):]
+    # 当日用合并口径（不是本次），往日用合并口径；按日期排序，回溯日期不错序。
+    series = sorted(hist_entries + [m.daily_rollup],
                     key=lambda e: str(e.get("report_date", "")))
     m.trend_points = [TrendPoint(date=e["report_date"], pass_rate=e.get("pass_rate", 0.0),
                                  total=e.get("total_tests", 0), fail=e.get("fail_tests", 0),
@@ -256,10 +309,21 @@ def _item_unit(collected: CollectedData, item: str) -> str:
 
 
 def _trend_summary(points: list[TrendPoint]) -> dict:
-    """合格率趋势摘要：斜率 + 环比 + 文字结论。"""
-    if len(points) < 2:
+    """合格率趋势摘要：斜率 + 环比 + 文字结论。
+
+    小样本天（total<5，通常是巡检 1 项探针或单批补录）的合格率是 0%/100% 的
+    极端值，把它和 170 项的真实日一起算斜率，会把趋势拉成假信号
+    （夜测 11-20/21 P0 建议）。这里只用有足够样本的天算斜率，并在结论里
+    说明排除了几天；样本不足 2 天时照旧返回「数据不足」。
+    """
+    _min = 5
+    usable = [p for p in points if int(getattr(p, "total", 0) or 0) >= _min]
+    dropped = len(points) - len(usable)
+    if len(usable) < 2:
         return {"direction": "数据不足", "slope": 0.0, "wow_delta": 0.0,
-                "comment": "历史数据不足 2 天，暂无法判定趋势，请连续运行数日后查看"}
+                "comment": (f"有效数据不足 2 天（已排除 {dropped} 个样本<{_min} 项次的天），"
+                            "暂无法判定趋势，请连续运行数日后查看")}
+    points = usable
     rates = [p.pass_rate for p in points]
     n = len(rates)
     xs = list(range(n))
@@ -286,8 +350,9 @@ def _trend_summary(points: list[TrendPoint]) -> dict:
         change = f"较昨日 {wow / prev:+.1%}（{wow * 100:+.2f} 个百分点）"
     else:
         change = f"较昨日 {wow * 100:+.2f} 个百分点（昨日为 0，百分比无从算起）"
+    _drop_note = f"；已排除 {dropped} 个样本<{_min} 项次的天（探针/单批，不足以代表当日）" if dropped else ""
     return {"direction": direction, "slope": round(slope, 4), "wow_delta": round(wow, 4),
-            "comment": f"近 {n} 日合格率斜率 {slope:+.4f}/天（{direction}）；{change}"}
+            "comment": f"近 {n} 日合格率斜率 {slope:+.4f}/天（{direction}）；{change}{_drop_note}"}
 
 
 # ------------------------------------------------------------------ 预警评估
@@ -328,8 +393,12 @@ def evaluate_alerts(m: DailyMetrics, rules: list) -> list[Alert]:
         if op not in _OPS or not _OPS[op](actual, threshold):
             continue
         refs = _rule_refs(m, rule["id"])
-        detail = rule.get("detail", "").format(value=actual) if "{value" in rule.get("detail", "") \
-            else rule.get("detail", "")
+        # 模板可用 {value} 与 {report_date}。告警里写死「当日」会把补录的 10-01 表
+        # 说成今天（11-21 r04 一般：回填 10-01 仍喊「当日……请组织复盘」，让人去查
+        # 今天哪批出了问题）。带日期的文案由配置选用，旧 {value} 模板不受影响。
+        _fmt = rule.get("detail", "")
+        detail = _fmt.format(value=actual, report_date=m.report_date) \
+            if ("{value" in _fmt or "{report_date" in _fmt) else _fmt
         alerts.append(Alert(rule_id=rule["id"], level=rule.get("level", "info"),
                             title=rule.get("title", rule["id"]), detail=detail, refs=refs))
     order = {"critical": 0, "warning": 1, "info": 2}

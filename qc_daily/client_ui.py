@@ -5,6 +5,8 @@
 
 路由：
     GET  /app                     独立客户端首页
+    GET  /nightly                 每晚巡检账本（只读看板）
+    GET  /nightly/file/<name>     账本原文（白名单文件名）
     POST /api/client/chat         接 harness.run_harness()，返回三段式 + 真实工具步骤
     GET  /api/client/knowledge    知识库概览（复用 knowledge.overview）
 上传沿用已有的 /api/knowledge/upload，不重复实现。
@@ -24,9 +26,10 @@ from datetime import date
 from pathlib import Path
 from typing import Any
 
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, Response, jsonify, request
 
 from . import knowledge as kb
+from . import nightly_view
 
 client_bp = Blueprint("client", __name__)
 _HARNESS_LOCK = threading.Lock()
@@ -270,6 +273,7 @@ font-family:Consolas,monospace;word-break:break-all}
     <button class="newtask" id="new-conv">＋ 新建任务</button>
     <button class="side-link" id="kb-toggle">≡ 知识库 / 记忆</button>
     <a class="side-link" href="/" style="display:block;text-decoration:none">⌂ 品控日报后台</a>
+    <a class="side-link" href="/nightly" style="display:block;text-decoration:none">🌙 每晚巡检</a>
     <div class="tabs"><span class="on">任务</span><span class="off" title="频道功能尚未开放">频道</span><span class="off" title="定时功能尚未开放">定时</span></div>
     <div class="side-scroll">
       <div class="group" data-fold="pin">置顶 <span class="ar">▾</span></div>
@@ -356,8 +360,8 @@ font-family:Consolas,monospace;word-break:break-all}
 var CHIPS=[
  "你能干什么",
  "DEMO-001 这批稻谷出糙率 76.5 能收吗",
- "DEMO-002 水分含量 1.45 有没有敲错",
- "DEMO-003 整精米率 80 比出糙率 72 还高，可疑吗",
+ "DEMO-001 水分含量 145 是不是敲错了",
+ "籼稻谷 1 等 出糙率限值是多少",
  "出糙率 3 等限值是多少，依据在哪一条"
 ];
 var STORE='foodqc.sessions.v1', ACTIVE='foodqc.active.v1';
@@ -1033,15 +1037,44 @@ def _brief(result: dict) -> dict:
         # DEMO-999 和没给批次号 DEMO-001，两句逐字相同，打 DEMO-999 的人会照提示
         # 重打同一个号，永远出不来（夜测 11-10 r02）。手里有 batch_id 就别再说「没识别出」。
         where = "只跑到查限值就停了" if "lookup_limit" in tools else "没进入逐项判定"
-        if batch and batch != "这个批次":
-            cause = (f"系统拿到的批次是 {batch}，但没有可判的指标记录，{where}。"
-                     "（如果你并没有写批次号，这是系统用的默认演示批次，不是你的来料。）")
-            nxt = "下一步：换一个 DEMO 假批次，或把该批次的检测项目与实测值补进 DEMO 数据后再问。"
+        # 工具自己说了原因，就照它的原话讲——别拿一句猜的「没识别出你要问的批次」盖过去。
+        reject_brief = str(result.get("reject_brief") or "").strip()
+        if reject_brief.startswith("拒绝"):
+            cause = reject_brief
+            nxt = ("下一步：按上面点名的批次再问一次；要测别的批次，先把它的检测项目与"
+                   "实测值补进内置 DEMO 数据。真实批次号与实测值不进本系统。")
+        elif batch and batch != "这个批次":
+            try:
+                from . import harness as _h
+                _known = str(batch).upper() in _h.known_batches()
+                _names = "、".join(_h.known_batches())
+            except Exception:
+                _known, _names = True, "DEMO-001"
+            if not _known and str(batch).upper().startswith("DEMO-"):
+                # 写了批次号却不在内置数据里：直说这一批没有假数据，
+                # 别绕成「没有可判的指标记录」——那暗示批次存在、只是没填指标
+                # （夜测 2026-11-12 r02 轻微③）。
+                cause = (f"{batch} 不在内置演示数据集里 —— 目前只有 {_names} 这一批有假数据，"
+                         "所以没有可判的东西。")
+                nxt = (f"下一步：换成 {_names} 再问，或把这批的检测项目与实测值补进 DEMO 数据。"
+                       "真实批次号与实测值不进本系统。")
+            else:
+                # 「没有可判的指标记录」把两种病说成一种：其实是没识别出要问哪个指标，
+                # 只跑到查限值就停了；DEMO-001 本身有 5 条假数据，不是空批次。
+                # 同轮 ED-03 刚说「只有 DEMO-001 有假数据」，前后打架
+                # （夜测 2026-11-15 r02 一般，11-14 r02 起第 3 晚）。
+                cause = f"系统拿到的批次是 {batch}，但没识别出你要问哪个指标，{where}。"
+                if str(batch).upper() == "DEMO-001":
+                    # 只有可能是「没写批次号」时才解释默认批次，否则这句纯噪音
+                    cause = (f"系统拿到的批次是 {batch}（你没写批次号时用的默认演示批次），"
+                             f"但没识别出你要问哪个指标，{where}。")
+                nxt = ("下一步：带上具体指标再问一次，例如「DEMO-001 这批稻谷出糙率 76.5 能收吗」；"
+                       "不用换批次——没给指标时换哪一批都跑不出逐项结论。")
         else:
             cause = f"没识别出你要问的批次和指标，{where}。"
             nxt = ("下一步：带上 DEMO 批次号和具体指标再问一次，"
                    "例如「DEMO-001 这批稻谷出糙率 76.5 能收吗」。")
-        has_concl = bool(ok or rv or ms)
+        has_concl = any("→ 代码判定「" in str(x) for x in (ok + rv + ms))
         second = ("下面有逐项结论，但本次没跑完整条判定链，不给「能收 / 不能收」。"
                   if has_concl else
                   "下面没有逐项判定结论，也不给「能收 / 不能收」。这不是「查过没问题」，是根本没查。")
@@ -1052,10 +1085,16 @@ def _brief(result: dict) -> dict:
         }
 
     paras: list[str] = []
+    judged = [x for x in ok if "判定「" in x]
     if passed:
         paras.append(f"{batch} 我逐项比过了，{passed} 项数值按代码判定落在限值内。")
-    else:
+    elif judged:
         paras.append(f"{batch} 的逐项判定跑完了，明细在下面。")
+    else:
+        # 「跑了 4 个工具」不等于「判了东西」。0 条判定时说「跑完了」，
+        # 问「这个数有没有敲错」的人会读成「查过没问题」（夜测 2026-11-12 r02 严重）。
+        paras.append(f"{batch} 这次没有可判的检测项，所以一项判定结论都没有 —— "
+                     "这不是「查过没问题」，是根本没东西可查。")
     if suspect:
         paras.append(
             f"{ind}那格填的数不对劲：百分类不该超过 100，看着像小数点或单位敲错了。"
@@ -1102,7 +1141,14 @@ def _checkpoints(text: str, batch_id: str, mode: str, in_chain: bool = False) ->
     has_mark = any(k in t for k in _NEED_CHECK)
     if in_chain and has_mark:
         out: list[dict] = []
-        if batch_id:
+        # 只有内置演示数据里真有这批，才给「打开原始数据」——否则点开是 404，
+        # 而卡片上还写着「点开能直接看到这批的实测值」（夜测 2026-11-12 r02 严重）。
+        try:
+            from . import harness as _h
+            known = str(batch_id or "").upper() in _h.known_batches()
+        except Exception:
+            known = False
+        if batch_id and known:
             out.append({
                 "kind": "record",
                 "title": f"先看 {batch_id} 这批的原始记录",
@@ -1177,6 +1223,22 @@ def _read_trace(path: str) -> list[dict[str, Any]]:
 @client_bp.get("/app")
 def client_index():
     return _PAGE
+
+
+@client_bp.get("/nightly")
+def client_nightly():
+    """每晚巡检账本：只读，不重跑巡检、不改判定。"""
+    return Response(nightly_view.render_html(), mimetype="text/html; charset=utf-8")
+
+
+@client_bp.get("/nightly/file/<name>")
+def client_nightly_file(name: str):
+    """账本原文：文件名白名单，防 ../ 穿越；只回内容不回本机路径。"""
+    text = nightly_view.file_text(name)
+    if text is None:
+        return Response("找不到这份账本（或文件名不在白名单内）", status=404,
+                        mimetype="text/plain; charset=utf-8")
+    return Response(text, mimetype="text/plain; charset=utf-8")
 
 
 _MODES = ("auto", "judge", "chat", "lookup")

@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 from datetime import date, datetime, timedelta
 
 from .analysis import HistoryStore, compute_metrics, evaluate_alerts
@@ -43,6 +44,31 @@ class QCDailyAgent:
         # 导入层的提醒（哪几行没进判定）由任务层挂进来，写进日报正文。
         # 不这么做的话，「少了一项不合格」只会在任务卡上提一句，而看报告、签字的人什么也看不到。
         self.import_notes: list[str] = []
+
+    # ---------------------------------------------------------------- 版本横幅
+
+    def _version_banner(self, conflicts: list) -> str:
+        """报告顶部横幅：只在真有问题时出现，并且点名是哪几行。
+
+        ① 有录入行按别的版本判、且两版结论相反 → 点名批次×指标与两个数；
+        ② 限值尚未人工核对（老口径，保留）。
+        旧版只看 ②，而 2026-11-11 切版后 `active_limits_verified=true`，
+        横幅被永久清空——「表内 2025 / 本版 2009」这件最该说的事反而没人说
+        （夜测 2026-11-12 r04：交付的日报里 0 处警示，经理版还直写「判定依据 2025」）。
+        """
+        parts: list[str] = []
+        if conflicts:
+            n = len(conflicts)
+            sample = "；".join(f"{r.batch_id}×{r.item}（{r.version_conflict}）"
+                              for r in conflicts[:3])
+            more = f"　等共 {n} 项" if n > 3 else ""
+            parts.append(
+                f"⛔ 本批有 {n} 个检测项的限值版本与本系统当前执行版 "
+                f"{self.config.standard_version} 不一致，且两版结论相反：{sample}{more}。"
+                "这些项已改为「不判」，不写「合格」；放行前必须先确认这批货该用哪一版标准。")
+        if self.config.standard_warning and not self.config.active_limits_verified:
+            parts.append(self.config.standard_warning)
+        return "　".join(parts)
 
     # ---------------------------------------------------------------- 日期解析
 
@@ -135,8 +161,8 @@ class QCDailyAgent:
                 alerts.append(Alert(
                     rule_id="data_validation_failed", level="critical",
                     title="日报数据校验未通过，报告未发布",
-                    detail=f"{target} 数据存在 {len(err_issues)} 项错误："
-                           + "；".join(e.message for e in err_issues[:5])
+                    detail=f"{target} 数据存在 {len(err_issues)} 项错误（逐条列全，不截断）："
+                           + "；".join(e.message for e in err_issues)
                            + "。已按『宁可不发，不可错发』原则拒绝发布，请人工核查源系统。",
                     refs=[e.ref for e in err_issues if e.ref]))
                 _STEP("预警", "⛔ 数据校验失败，拒绝发布报告")
@@ -148,6 +174,13 @@ class QCDailyAgent:
                 report_dir = os.path.join(self.output_root, "reports", target.isoformat())
                 os.makedirs(report_dir, exist_ok=True)
                 title = self.config.report.get("title", "食用油中控品控日报")
+                # 版本警示的判据从「限值有没有核对」改成「有没有录入行按别的版本判」。
+                # 旧判据 `not active_limits_verified` 在 2026-11-11 切版后恒为 False，
+                # 于是横幅被永久清空：表里写 2025、系统按 2009 执行，
+                # 交付的日报上却一个字都不提（夜测 2026-11-12 r03/r04 严重）。
+                conflicts = [r for r in data.quality
+                             if str(getattr(r, "version_conflict", "") or "").strip()]
+                banner = self._version_banner(conflicts)
                 base_meta = {
                     "run_id": run_id, "title": title,
                     "source_type": self.config.source.get("type", ""),
@@ -156,8 +189,8 @@ class QCDailyAgent:
                     "provenance": [p.to_dict() for p in data.provenance],
                     "warehouse_limits": self.config.warehouse_limits,
                     "output_root": self.output_root,
-                    "warning_banner": (self.config.standard_warning
-                                       if not self.config.active_limits_verified else ""),
+                    "warning_banner": banner,
+                    "version_conflicts": [r.to_dict() for r in conflicts],
                     "suspects": [s.to_dict() for s in suspects],
                     "qc_details": [r.to_dict() for r in data.quality],
                     "import_notes": list(self.import_notes),
@@ -209,6 +242,27 @@ class QCDailyAgent:
                     except Exception as e:
                         errors.append(f"Excel 导出失败: {e}")
                         _STEP("导出", f"⛔ Excel 导出失败: {e}")
+
+                # ---- 6.9 按 run 留档：固定名入口给「最新一次」，带短码副本永久保留 ----
+                # 旧行为：文件名只带日期，同一天第 2 次运行整份覆盖第 1 次，
+                # 日报入口只剩最后一张（11-21 r04 严重：126 项审核版被 1 项探针顶掉，
+                # 入口与 history 合并真值差 29 倍，第 9 晚未修）。
+                # 现在固定名仍写（兼容 reports/<day> 路由与「今天最新」语义），
+                # 另存一份带 run 短码的同内容副本，从此每次都能追溯、不再丢版本。
+                short = run_id.replace("T", "", 1)[-10:] if run_id else "snapshot"
+                archived = 0
+                for p in list(outputs.values()):
+                    if not os.path.isfile(p):
+                        continue
+                    stem, ext = os.path.splitext(p)
+                    copy_path = f"{stem}_{short}{ext}"
+                    try:
+                        shutil.copyfile(p, copy_path)
+                        archived += 1
+                    except OSError as e:
+                        errors.append(f"run 留档副本写入失败: {e}")
+                if archived:
+                    _STEP("留档", f"当日已按 run 留 {archived} 份副本（短码 {short}），不再互相覆盖")
 
                 # ---- 7. 推送预警 ----
                 if do_push:

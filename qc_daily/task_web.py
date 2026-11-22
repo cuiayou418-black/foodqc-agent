@@ -232,9 +232,13 @@ def _headline(d: dict) -> tuple[str, str]:
     # 拒跑的时候，「为什么没跑」就是这次唯一的结论，别让人去折叠区里找
     if d.get("status") == "failed":
         errs = [str(e) for e in (d.get("errors") or []) if str(e).strip()]
+        # 抬头语气跟状态标签一致：按规矩停下的是黄（warn），真异常才红（bad）。
+        # 旧版无条件 bad，于是左侧标签黄、抬头红，同一张卡两种语气
+        # （夜测 2026-11-12 r05 一般①：字改了、色没改）。
+        tone = (_STOP_CN.get(_stop_code(d)) or ("", "bad"))[1] or "bad"
         if errs:
-            return f"没做 —— {errs[0]}", "bad"
-        return "没做 —— 没给出原因，展开「技术信息」看留痕", "bad"
+            return f"没做 —— {errs[0]}", tone
+        return "没做 —— 没给出原因，展开「技术信息」看留痕", tone
     n_ok = len(sec.get("已确认") or [])
     rev = [str(x) for x in (sec.get("待人工复核") or [])]
     n_rev_v = sum(1 for x in rev if "→ 代码判定「" in x)          # 逐项结论
@@ -301,8 +305,15 @@ def _priority_files(arts: list[dict], run_id: str) -> list[dict]:
     htmls = sorted([a["name"] for a in arts if a["name"].lower().endswith(".html")], key=rank)
     out: list[dict] = []
     for i, n in enumerate(htmls[:2]):
-        out.append({"label": "打开日报（网页）" if rank(n) == 0 else "打开任务报告",
-                    "href": href(n), "primary": i == 0})
+        # 品控日报与经理日报都命中「日报」，旧版给两个按钮同名文案，
+        # 点错会以为日报内容少了（夜测 2026-11-12 r03 轻微，r04 复发）。
+        if rank(n) != 0:
+            label = "打开任务报告"
+        elif "经理" in n:
+            label = "打开经理日报（摘要）"
+        else:
+            label = "打开品控日报（明细）"
+        out.append({"label": label, "href": href(n), "primary": i == 0})
     for a in arts:
         low = a["name"].lower()
         if low.endswith(".xlsx"):
@@ -344,6 +355,12 @@ def _build_view(d: dict, run_id: str) -> dict:
         groups.append({"key": key, "label": label, "tone": tone,
                        "count": len(items), "items": items})
 
+    # 任务压根没跑成时，三组 0/0/0 不是「查了没有」，是「没查」；前端还会对空组
+    # 无条件补「这次没有…项」，于是 0 字节文件也能读到「没有缺依据的项」
+    # （夜测 11-13 / 11-14 / 11-15 连续三晚）。groups 为空即一组都不渲染。
+    if d.get("status") == "failed":
+        groups = []
+
     # 结构化 critical 告警：detail 里本来就写着批号、项名和十几个 refs，
     # 旧版只读 notes + metrics，从不读 d["alerts"] → 最该给人看的那条留在 JSON 里
     # （夜测 11-10 r04：重复批次被拦得对，界面却不说哪一批）。
@@ -364,12 +381,21 @@ def _build_view(d: dict, run_id: str) -> dict:
     # 「下一步怎么办」写在 notes 里，旧版不进 view，卡片上看不到（夜测 M6）。
     # 旧版先 notes[:3] 再 note_lines[:2] 双重截断：3 行读不懂只列第 1 行，
     # 使用人改完第 1 行重传还会再撞两次同样的错（夜测 11-10 r04）。全留。
+    seen_notes: set[str] = set()
     for n in (d.get("notes") or []):
+        raw_n = str(n).strip()
+        # 标记必须在剥前缀「之前」判：导入层的「文件名[sheet] 」正则会把
+        # [pending_review] 一并吃掉，旧版这个判断永远为假（死代码），
+        # 本该隐藏的说明进了卡片、同一句还出现两遍
+        # （夜测 2026-11-12 r04 轻微②）。
+        if not raw_n or "[pending_review]" in raw_n:
+            continue
         # 导入层给每条 note 加了「文件名[sheet] 」前缀；剥掉它再判语气，
         # 否则一句「下一步：…」会被套成「提示：xxx.xlsx[记录] 下一步：…」。
-        s = re.sub(r"^[^\s\[]*\[[^\]]*\]\s*", "", str(n).strip())
-        if not s or s.startswith("[pending_review]"):
+        s = re.sub(r"^[^\s\[]*\[[^\]]*\]\s*", "", raw_n)
+        if not s or s in seen_notes:
             continue
+        seen_notes.add(s)
         alerts.append(s if s.startswith(("下一步", "原因", "提示", "说明",
                                          "⚠️", "⛔", "【版本】", "【等级】"))
                       else f"提示：{s}")
@@ -438,13 +464,21 @@ def _history_rows(limit: int = 10) -> list[dict]:
         # 右栏窄：先给 ≤10 字的短错因码，再挂一点原文。旧版截 22 字，
         # 四种不同的病前 22 字全一样，区分点恰好被切掉（夜测 11-10 r05）。
         short = _STOP_CN.get(stop, ("", ""))[0]
+        raw_reason = reason
         if short:
-            reason = f"{short}：{reason[:14] + '…' if len(reason) > 14 else reason}" \
-                if reason else short
+            # runner 把 headline 也拼成了「表里没读到数据行：…」，这里再无条件拼一次
+            # 就成了「表里没读到数据行：表里没读到数据行：…」
+            # （夜测 2026-11-12 r05 轻微①）。短码已在原文里就不重复。
+            if raw_reason.startswith(short):
+                reason = raw_reason[:22] + "…" if len(raw_reason) > 22 else raw_reason
+            else:
+                reason = (f"{short}：{raw_reason[:14] + '…' if len(raw_reason) > 14 else raw_reason}"
+                          if raw_reason else short)
         elif len(reason) > 22:
             reason = reason[:22] + "…"
         out.append({"run_id": r.get("run_id", ""), "name": name, "when": when,
                     "status_cn": cn, "tone": tone, "reason": reason, "count": 1,
+                    "_raw": raw_reason,
                     "report_date": r.get("report_date", "")})
         if len(out) >= limit:
             break
@@ -452,7 +486,11 @@ def _history_rows(limit: int = 10) -> list[dict]:
     # 否则演示时右栏挂六条一模一样的「出错了」很扎眼（夜测 2026-11-09 G7）
     merged: list[dict] = []
     for h in out:
-        key = (h["name"], h["when"], h["status_cn"], h["reason"])
+        # 折叠只该合并「同一分钟、同名、同状态、同一句原始错因」的连点记录。
+        # 旧键用的是截到 14 字的展示文案，BD-09(＜0.5) 与 BD-10(十三点二)
+        # 截完一模一样，两个不同文件的两种病被折成「×2」
+        # （夜测 2026-11-12 r05 轻微②）。改用未截断的原文。
+        key = (h["name"], h["when"], h["status_cn"], h["_raw"])
         if merged and merged[-1].get("_key") == key:
             merged[-1]["count"] += 1
             continue
@@ -460,6 +498,7 @@ def _history_rows(limit: int = 10) -> list[dict]:
         merged.append(h)
     for h in merged:
         h.pop("_key", None)
+        h.pop("_raw", None)
     return merged
 
 
@@ -840,6 +879,10 @@ def start_background(req, root: str = "runs") -> str:
                                      "data_checksum": res.data_checksum,
                                      "report_fingerprint": res.report_fingerprint,
                                      "root": root,
+                                     # 磁盘重建分支早就有 alerts，内存分支两处都漏了：
+                                     # 刚跑完的卡片看不到「哪一批 × 哪一项」的 critical 明细
+                                     # （夜测 2026-11-12 r04 一般②，11-11 r04 只修了一半）。
+                                     "alerts": res.alerts,
                                      "artifacts": list_artifacts(res.run_id, root)}
         except Exception as e:
             with _LOCK:
@@ -925,6 +968,10 @@ def api_run():
                                      "data_checksum": res.data_checksum,
                                      "report_fingerprint": res.report_fingerprint,
                                      "root": root,
+                                     # 磁盘重建分支早就有 alerts，内存分支两处都漏了：
+                                     # 刚跑完的卡片看不到「哪一批 × 哪一项」的 critical 明细
+                                     # （夜测 2026-11-12 r04 一般②，11-11 r04 只修了一半）。
+                                     "alerts": res.alerts,
                                      "artifacts": list_artifacts(res.run_id, root)}
         except Exception as e:
             with _LOCK:

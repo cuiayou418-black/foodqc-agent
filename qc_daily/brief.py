@@ -332,13 +332,33 @@ def _html(m: DailyMetrics, meta: dict, stats: dict) -> str:
 
 
 def _standards(meta: dict) -> str:
-    """判定依据：把 qc_details 里出现过的标准号去重列出来，不硬写。"""
+    """判定依据：表内标准号 + 系统执行版，两格都印，不只在冲突时印。
+
+    ⚠️ 旧版只在 version_conflicts 非空时才加注，于是「表里写 2025、各档限值又恰好
+    与 2009 相同」时，经理版直写「判定依据：GB 1350—2025」，而卡片正说着
+    「2025 不得用于判旧货」——同一份 run 两张嘴（夜测 2026-11-15 r03/r04 一般）。
+    执行版标准号取自 corpus/limits.json，与 intent.py 取值同源，不手抄。
+    """
     seen: list[str] = []
     for r in meta.get("qc_details") or []:
         s = (r.get("standard") or "").strip()
         if s and s not in seen:
             seen.append(s)
-    return "、".join(seen) if seen else "现行有效标准（见审核版逐条出处）"
+    base = "、".join(seen) if seen else "现行有效标准（见审核版逐条出处）"
+    try:
+        from .limits_resolver import load_limits, STANDARD_KEY
+        exec_std = str(load_limits()[STANDARD_KEY]["标准号"])
+    except Exception:
+        exec_std = ""
+    parts = [f"表内标准号 {base}"]
+    if exec_std:
+        parts.append(f"系统执行版 {exec_std}（限值已逐格核对并经人工复核）")
+        if seen:
+            parts.append("两格若不一致，适用版本须由化验室确认，不得直接按表内号放行")
+    n = len(meta.get("version_conflicts") or [])
+    if n:
+        parts.append(f"其中 {n} 项两版结论相反，已改为「不判」，须先确认这批货该用哪一版")
+    return "；".join(parts)
 
 
 def _text(m: DailyMetrics, meta: dict, stats: dict) -> str:

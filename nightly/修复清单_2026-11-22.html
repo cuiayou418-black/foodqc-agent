@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>修复清单 · 2026-11-22 第二轮优化</title>
+<style>
+  :root{
+    --bg:#f6f8fa; --card:#ffffff; --ink:#1f2328; --muted:#6b7280;
+    --line:#e4e7eb; --red:#c0392b; --red-bg:#fdf0ee; --amber:#a86400;
+    --amber-bg:#fff8e8; --green:#1f7a4d; --green-bg:#eef8f2; --blue:#1d5fa8; --blue-bg:#eef4fc;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--ink);
+       font:14px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1040px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:.4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:24px}
+  h2{font-size:18px;margin:32px 0 12px;padding-left:11px;border-left:4px solid var(--blue)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:18px 20px;margin-bottom:14px}
+  .lead{background:var(--blue-bg);border:1px solid #cfe0f5;border-radius:10px;padding:16px 20px}
+  .warn{background:var(--amber-bg);border:1px solid #f0dfb0}
+  .ok{background:var(--green-bg);border:1px solid #c8e6d5}
+  table{width:100%;border-collapse:collapse;background:var(--card);font-size:13px}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:#f0f3f6;font-weight:600;white-space:nowrap}
+  code{background:#f1f3f5;padding:1px 5px;border-radius:4px;font-size:12px;font-family:Consolas,"Courier New",monospace}
+  .tag{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11px;font-weight:600;white-space:nowrap}
+  .t-amber{background:var(--amber-bg);color:var(--amber)}
+  .t-green{background:var(--green-bg);color:var(--green)}
+  .t-blue{background:var(--blue-bg);color:var(--blue)}
+  .t-gray{background:#eef0f2;color:var(--muted)}
+  ul{margin:8px 0 4px;padding-left:22px} li{margin:5px 0}
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin:16px 0}
+  .kpi div{flex:1;min-width:150px;background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+  .kpi b{font-size:24px;display:block;line-height:1.2} .kpi span{font-size:12px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🛠️ 修复清单 · 2026-11-22 第二轮优化</h1>
+  <div class="sub">接着 11-21 那轮，把剩下能"说清楚就解决"的项扫干净 · 小懒Q 代拍板 · 只改源码不提交 · HEAD 仍 <code>1a7d164</code></div>
+
+  <div class="lead">
+    <b>战报</b>：上一轮清完 5 个严重项，这轮把台账里<b>会误导但不至于给错数</b>的 10 处一一收拾——过期的事实说明、补录表喊"当日"、接口 404 回整页 HTML、报告只点前 2 个错值、标题冒充用户问的档、铬问答"给数又说不能判"、宽表假"表内标准号"、探针污染斜率、签字纸里印文件名。判定链核心照旧一行没动。
+  </div>
+
+  <div class="kpi">
+    <div><b style="color:var(--green)">10</b><span>处修复</span></div>
+    <div><b style="color:var(--blue)">224</b><span>单测全过（+12 条新回归）</span></div>
+    <div><b style="color:var(--amber)">3</b><span>项故意没做（记账）</span></div>
+    <div><b style="color:var(--red)">0</b><span>限值数值改动</span></div>
+  </div>
+
+  <h2>① 十处修复逐条对账</h2>
+  <table>
+    <tr><th>#</th><th>症状</th><th>改法（文件）</th><th>状态</th></tr>
+    <tr><td><span class="tag t-amber">M6</span></td><td><code>limits.json</code> 说"STANDARD_KEY 写死 2025、limits_verified=false"——查证实为 2009/true，过期旧状态</td><td>改状态说明文字，标注旧文案作废（<code>corpus/limits.json</code>，数值一字未动）</td><td><span class="tag t-green">已修</span></td></tr>
+    <tr><td><span class="tag t-amber">告警</span></td><td>补录 10-01 的表，near_limit 仍喊"当日 6 个项次…"</td><td>文案带 <code>{report_date}</code>（<code>config.py / qc_daily_config.json</code>）</td><td><span class="tag t-green">已修</span></td></tr>
+    <tr><td><span class="tag t-amber">M14</span></td><td><code>/api/</code> 下 404 回整页 HTML，接口调用方解析不了</td><td>404 分流：api 前缀回 JSON（<code>webapp.py</code>）</td><td><span class="tag t-green">已修</span></td></tr>
+    <tr><td><span class="tag t-amber">M7</span></td><td>读不懂的原值只点前 2 个，第 3 个起消失，签字人以为只有 2 行</td><td>全列 + 报总数（<code>tasks/runner.py</code>）</td><td><span class="tag t-green">已修</span></td></tr>
+    <tr><td><span class="tag t-amber">M2</span></td><td>问"籼稻谷出糙率"没写等别，标题印"3 等"——那是兜底档，不是用户问的档</td><td>标题标"默认3 等"，写了等别的不变（<code>intent.py</code>）</td><td><span class="tag t-green">已修</span></td></tr>
+    <tr><td><span class="tag t-amber">G1</span></td><td>铬问答正文"明写 1.0 mg/kg…强制项"，底注却说"不能拿去判"，一张卡打架</td><td>正文最前顶一句"摘录未逐格核对、不能当限值判"，原文保留可追溯（<code>intent.py</code>）</td><td><span class="tag t-green">已修</span></td></tr>
+    <tr><td><span class="tag t-amber">G2</span></td><td>宽表缺标准号列，系统补齐后日报却说"表内标准号：GB 1350—2009"还挂版本不一致图例</td><td>改说"判定依据标准号"；只有表内与执行版真不同才提版本确认（<code>templates.py</code>）</td><td><span class="tag t-green">已修</span></td></tr>
+    <tr><td><span class="tag t-amber">斜率</span></td><td>1 项探针的 100% 和 170 项的 97.65% 同权算斜率，拉出假趋势</td><td><code>total&lt;5</code> 的天不参与，结论标注排除了几天（<code>analysis.py</code>）</td><td><span class="tag t-green">已修</span></td></tr>
+    <tr><td><span class="tag t-amber">M5</span></td><td>等级假设把 <code>x.xlsx[Sheet1]【等级】</code> 原样印进签字纸</td><td>剥掉工程前缀只留核心句，防"表里没有表里没有"重复（<code>templates.py</code>）</td><td><span class="tag t-green">已修</span></td></tr>
+    <tr><td><span class="tag t-blue">回归</span></td><td>新增 12 条锁死上述修复</td><td><code>tests/test_nightly_20261122_fixes.py</code></td><td><span class="tag t-green">已加</span></td></tr>
+  </table>
+
+  <h2>② 关键取舍：G2 为什么没加字段</h2>
+  <div class="card">
+    要逐行精确区分"表内原有 vs 系统补齐"，得贯穿 <code>importer → sqlite → QCRecord → to_dict → templates</code> <b>五层</b>加字段，风险远大于收益。所以选了"只改展示说法"的路：
+    <ul>
+      <li>把"表内标准号"改成中性的"判定依据标准号"；</li>
+      <li>只有表内标准号与执行版<b>真的不同</b>时才提示版本确认；两者一致（典型是补齐）改说"标准号列为空时由执行版补齐，非表内原文"。</li>
+    </ul>
+    <b>诚实记账</b>：若表内真手写了"GB 1350—2009"，也会说"由执行版补齐"——这句略不准，但标准号确实一致、判定依据无误，比旧版谎称"表内写了 X"安全得多。要精确，等以后真需要时再贯字段。
+  </div>
+
+  <h2>③ 故意没做的三件（记账，不装没看见）</h2>
+  <div class="card warn">
+    <ol>
+      <li><b>历史探针行重算</b>：history.jsonl 是 append-only 账本，旧行原始数据已不可复现，重算等于编历史。要处理只能"标注口径变更、旧行不可比"，也不动账本——等你拍板。</li>
+      <li><b>DEMO-only 扩红线 / 失败 run 删除入口 / 上传保留期</b>：产品判断，不是 bug，等你自己定。</li>
+      <li><b>剩余 8 条轻微</b>：两表同值仍反问（连记 7 晚）、折叠类别数、"批次"同词两义、重复无行号、垃圾字节循环话术、headline 重复、三栏缺格、巡检 UNKNOWN 判据——按本轮范围没碰，台账里都在。</li>
+    </ol>
+  </div>
+
+  <h2>④ 验收证据（全部实跑）</h2>
+  <div class="card ok">
+    <ul>
+      <li><b>编译 + 单测</b>：<code>compileall -q qc_daily tests</code> OK；<code>unittest discover -s tests -q</code> → <b>Ran 224 OK</b>（212 + 新 12）。</li>
+      <li><b>HTTP 冒烟</b>：干净重启 8000，<code>/app</code> <code>/tasks</code> <code>/reports</code> <code>/knowledge</code> 全 200。</li>
+      <li><b>M14</b>：<code>/api/nope-xxx</code> 返回 <code>Content-Type: application/json</code> + <code>{"ok":false,"error":"接口不存在"}</code>。</li>
+      <li><b>G1</b>：铬问答首行 =「⚠️ 先说清楚：下面的数字…不能当限值直接判」，原文 1.0 mg/kg 仍在其后。</li>
+      <li><b>M2</b>：没写等别 → 标题"默认3 等"；写"1 等" → 标题"1 等"无默认。</li>
+      <li><b>near_limit</b>：<code>2026-10-01 6 个项次限值利用率 ≥ 80%…</code>。</li>
+      <li><b>G2 端到端</b>：造无标准号列宽表跑任务，日报口径块 =「判定依据标准号：GB 1350—2009 | … | 标准号列为空时由执行版补齐，非表内原文 | 等级假设：表里没有…」，无假陈述、无假图例、无文件名。</li>
+      <li><b>M5</b>：三种 note 形态（带文件名/带【等级】/带"表里缺"）输出均干净、无重复。</li>
+    </ul>
+  </div>
+
+  <div class="sub" style="margin-top:28px">决策全过程见 <code>nightly/DECISIONS_2026-11-22.md</code> · 回归测试见 <code>tests/test_nightly_20261122_fixes.py</code> · 未 git 提交，等小崔拍板后再定。</div>
+</div>
+</body>
+</html>

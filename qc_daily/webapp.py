@@ -472,6 +472,11 @@ def create_app(config: QCDailyConfig, with_scheduler: bool = False) -> Flask:
     # ---------- 错误页 ----------
     @app.errorhandler(404)
     def _404(e):
+        # /api/ 下的 404 必须回 JSON：接口调用方拿到一整页 HTML 没法解析，
+        # 会把「正确的资源不存在」记成 UNKNOWN/格式错（夜测 11-21 r06 M14）。
+        if request.path.startswith("/api/"):
+            return jsonify({"ok": False, "error": "接口不存在",
+                            "path": request.path}), 404
         # 别读 e.description —— Werkzeug 那句是英文，兜底永远轮不到（夜测 M13）
         return tpl.page("页面不存在", "", """
 <div class='empty'><p>没找到这个页面，可能是地址打错了，或者链接已经过期。</p>

@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import hashlib
+import html
 import io
 import json
 import os
@@ -47,6 +48,11 @@ PER_ROUND = 9       # 每轮 9 个场景，覆盖问答/表格/畸形/拒绝/页
 # 与一次性整夜巡检（state.json / rounds/round-NN.md）互不干扰。
 
 sys.path.insert(0, str(REPO))
+# 直接跑脚本 / 当包导入 / 用 spec_from_file_location 加载，三种方式都要能找到同目录的模块。
+_NIGHTLY_DIR = str(Path(__file__).resolve().parent)
+if _NIGHTLY_DIR not in sys.path:
+    sys.path.insert(0, _NIGHTLY_DIR)
+import negative_controls as nc  # noqa: E402  —— 负控样本 + 三态分母（2026-11-13）
 
 
 # ----------------------------------------------------------------- 环境
@@ -284,7 +290,10 @@ def build_scenarios() -> list[dict]:
               LONG_HEAD,
               ["DEMO-U01", "中晚籼稻谷", "水分含量", "未检出", "%", "≤", "13.5", "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"],
               ["DEMO-U02", "中晚籼稻谷", "水分含量", "—", "%", "≤", "13.5", "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"],
-              ["DEMO-U03", "中晚籼稻谷", "水分含量", "ND", "%", "≤", "13.5", "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"]]},
+              ["DEMO-U03", "中晚籼稻谷", "水分含量", "ND", "%", "≤", "13.5", "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"],
+              # `/` 是化验室最常见的「不适用 / 空格」写法，场景名里写了却从没被测
+              # （夜测 2026-11-12 r04 轻微·工具）。补上这一行才对得上场景名。
+              ["DEMO-U04", "中晚籼稻谷", "水分含量", "/", "%", "≤", "13.5", "GB 1350—2025", SRC, PROBE_DATE, "张三", "A"]]},
           question="做成日报"),
         S("BD-04", "表格·畸形", "xlsx 纯公式列（无缓存值）", "task",
           file={"kind": "xlsx", "name": "公式列.xlsx", "sheets": {"记录": [
@@ -426,7 +435,17 @@ def run_page(scn) -> dict:
         out["error"] = r["error"]
     body = r.get("body") or {}
     if "_raw" in body:
-        out["raw_head"] = body["_raw"][:120]
+        raw = body["_raw"]
+        out["raw_head"] = raw[:120]
+        # 2026-11-13 三态闸门上线后，这里只留 HTTP + 120 字 raw_head，
+        # 被 classify_observation 判「回执正常但业务观测为空」→ 11-14 r06
+        # 整整 8 个页面场景全 UNKNOWN、有效判定 0。页面正文就是它的业务观测，
+        # 这里抽一段可见文本填 content，不是放松判定：HTTP 200 但真没正文
+        # 仍然会落 UNKNOWN，只有确实渲染出内容才算观测到。
+        text = re.sub(r"(?is)<(script|style)[^>]*>.*?</\1>", " ", raw)
+        text = re.sub(r"(?s)<[^>]+>", " ", text)
+        text = html.unescape(text)
+        out["content"] = re.sub(r"\s+", " ", text).strip()[:800]
     return out
 
 
@@ -581,11 +600,18 @@ def run_round(n: int, nightly_tag: str = "") -> int:
             else:
                 facts = run_page(scn)
             verdict, notes = auto_check(scn, facts)
+            # 三态：回执对了 ≠ 观测到了。PASS 但没有业务观测一律降级，
+            # 绝不把「跑了没东西」记成通过（负控 NC-05 专门锁这条）。
+            obs_state, obs_why = nc.classify_observation(scn, facts)
+            if obs_state in (nc.UNKNOWN, nc.NOT_EXECUTED) and verdict == "PASS":
+                verdict = obs_state
+                notes = notes + [f"观测降级：{obs_why}"]
             meta["scenarios"].append({
                 "id": scn["id"], "group": scn["group"], "title": scn["title"],
                 "question": scn.get("question") or (scn.get("payload") or {}).get("question", ""),
                 "goal": scn.get("goal", ""),
-                "verdict": verdict, "notes": notes, "facts": facts,
+                "verdict": verdict, "observation": obs_state,
+                "notes": notes, "facts": facts,
                 "at": t0.isoformat(timespec="seconds"),
             })
             print(f"  [{verdict:4s}] {scn['id']} {scn['title'][:34]}")
@@ -612,6 +638,22 @@ def run_round(n: int, nightly_tag: str = "") -> int:
             if s["verdict"] == "PASS":
                 s["verdict"] = "WARN"
 
+    # ---------------------------------------------------------- 三态分母 + 负控
+    # 别用「解释看起来一致」代替「结果一致」：执行数 / 有效判定数 / 实际触达数
+    # 分开报，NOT_EXECUTED 与 UNKNOWN 各自单列，不挤进 PASS 里。
+    sc_list = meta["scenarios"]
+    meta["denominator"] = {
+        "executed": len(sc_list),
+        "touched": sum(1 for s in sc_list if s["observation"] == nc.OBSERVED),
+        "effective": sum(1 for s in sc_list if s["verdict"] in ("PASS", "WARN", "FAIL")),
+        "not_executed": sum(1 for s in sc_list if s["verdict"] == nc.NOT_EXECUTED),
+        "unknown": sum(1 for s in sc_list if s["verdict"] == nc.UNKNOWN),
+        "pass": sum(1 for s in sc_list if s["verdict"] == "PASS"),
+    }
+    # 每轮跑完都验一遍「判据还活着」：必败样本必须被拦下。
+    # 判据源码一改，criteria_digest 就变，旧负控自动作废（不是静默全绿）。
+    meta["negative_controls"] = nc.verify(auto_check)
+
     meta["finished_at"] = datetime.now().isoformat(timespec="seconds")
     OUT_DIR.mkdir(parents=True, exist_ok=True)
     stem = f"round-{n:02d}" if not nightly_tag else f"nightly-{nightly_tag}-r{n:02d}"
@@ -626,6 +668,23 @@ def run_round(n: int, nightly_tag: str = "") -> int:
           f"服务：{meta['server']}", ""]
     if meta.get("fatal"):
         md += [f"**{meta['fatal']}**", ""]
+    d = meta["denominator"]
+    ncres = meta["negative_controls"]
+    nd = ncres["denominator"]
+    md += ["## 分母（三态）", "",
+           f"- 执行数 {d['executed']} ／ 有效判定数 {d['effective']} ／ 实际触达数 {d['touched']}",
+           f"- NOT_EXECUTED {d['not_executed']} ／ UNKNOWN {d['unknown']}（都不挤进 PASS）",
+           "",
+           f"## 负控样本：{ncres['overall']}", "",
+           f"- 已执行 {nd['executed']} ／ 触达判据 {nd['touched']} ／ 确实拦住 {nd['effective']}",
+           f"- 判据漂移 {nd['criteria_drift']} ／ 假绿 {nd['silent_green']} ／ 坏样本 {nd['bad_cases']} ／ 未执行 {nd['not_executed']}",
+           f"- {ncres['reason']}", ""]
+    need_eye = [c for c in ncres["cases"] if c["state"] != "EFFECTIVE"]
+    if need_eye:
+        md += ["需要人工看一眼的负控：", ""]
+        for c in need_eye:
+            md.append(f"- `{c['case_id']}` [{c['state']}] {c.get('why', '')}")
+        md.append("")
     for s in meta["scenarios"]:
         md.append(f"## [{s['verdict']}] {s['id']} · {s['title']}")
         # 标题即验收标准：每条写清「过了说明哪项能力达标」，不只写现象。
@@ -655,6 +714,12 @@ def run_round(n: int, nightly_tag: str = "") -> int:
     state_file.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
     nxt = n + 1 if n < ROUNDS else 1      # 每晚巡检：跑满 6 轮后从 1 重新循环
+    print(f"DENOMINATOR=executed:{d['executed']} touched:{d['touched']} "
+          f"effective:{d['effective']} UNKNOWN:{d['unknown']} "
+          f"NOT_EXECUTED:{d['not_executed']}")
+    print(f"NEGATIVE_CONTROLS={ncres['overall']} "
+          f"effective:{nd['effective']}/{nd['touched']} "
+          f"drift:{nd['criteria_drift']} silent_green:{nd['silent_green']}")
     print(f"\nROUND={n} OF={ROUNDS} NEXT={nxt}")
     if nightly_tag:
         print(f"DATE={nightly_tag} MODE=NIGHTLY")
@@ -751,8 +816,27 @@ def main() -> int:
     ap.add_argument("--reset", action="store_true", help="把进度重置到第 1 轮")
     ap.add_argument("--nightly", action="store_true",
                     help="每晚巡检：按日期轮换一轮、日志按天归档，6 轮后自动循环")
+    ap.add_argument("--self-test", action="store_true",
+                    help="故障注入自检：不发请求、不碰真表，只验判据会不会响")
+    ap.add_argument("--refresh-controls", action="store_true",
+                    help="判据源码改过之后，重算负控 criteria_digest 并写回 JSONL")
     a = ap.parse_args()
 
+    if a.refresh_controls:
+        n = nc.refresh_controls(auto_check)
+        print(f"已按当前 auto_check 源码重算 {n} 条负控的 criteria_digest")
+        print("下一步：跑 --self-test 确认每条必败样本仍被拦下")
+        return 0
+    if a.self_test:
+        r = nc.self_test(auto_check)
+        nd = r["denominator"]
+        print("=== 判据自检（故意弄坏 DEMO 观测，看闸门会不会响）===")
+        for c in r["cases"]:
+            print(f"  [{c['state']:15s}] {c['case_id']} {c['injected_fault']}: {c.get('why', '')}")
+        print(f"已执行 {nd['executed']} / 触达 {nd['touched']} / 拦住 {nd['effective']} "
+              f"/ 漂移 {nd['criteria_drift']} / 假绿 {nd['silent_green']}")
+        print(f"SELF_TEST={r['overall']} —— {r['reason']}")
+        return 0 if r["overall"] == "PASS" else 1
     if a.nightly:
         return run_nightly()
     if a.reset:

@@ -55,8 +55,31 @@ def _is_demo(batch_id) -> bool:
     return str(batch_id or "").upper().startswith("DEMO-")
 
 
+def known_batches() -> list[str]:
+    """内置演示数据里真实存在的批次（前端示例按钮、指路链接都以此为准）。"""
+    return sorted(_DEMO_PLAN)
+
+
+def _demo_known(batch_id) -> bool:
+    return str(batch_id or "").strip().upper() in _DEMO_PLAN
+
+
 def _runs_dir(batch_id: str) -> str:
     return os.path.join(ROOT, "runs", batch_id)
+
+
+def _unknown_batch_brief(batch_id: str) -> str:
+    """批次号是 DEMO- 开头、但内置数据里没有它时，必须当场说清「没数据」，不许判 0 项。
+
+    夜测 2026-11-12 r02 严重（11-08 起第 4 晚）：点前端第 2 个示例按钮
+    「DEMO-002 水分含量 1.45 有没有敲错」，四个工具都跑完、judge_batch 写「0 项」、
+    validate_record 写「无疑点」，界面把它翻成「逐项判定跑完了」——
+    问「1.45 有没有敲错」的人读成「查过了，没问题」。空转比拒答危险得多。
+    """
+    known = "、".join(known_batches())
+    return (f"拒绝：内置演示数据里只有 {known} 这一批有假数据，没有 {batch_id}。"
+            f"本次没有任何一项参与判定，所以不能给「合格 / 无疑点」这类结论；"
+            f"要判定请改用 {known}。")
 
 
 def _tool_result(ok, safety, confidence, data, brief, reject=False) -> dict:
@@ -147,6 +170,9 @@ def validate_record(batch_id: str = DEMO_BATCH_DEFAULT) -> dict:
     if not _is_demo(batch_id):
         return _tool_result(False, True, 0.0, {"batch_id": str(batch_id)},
                             "拒绝：harness 只接受 DEMO- 假批次", True)
+    if not _demo_known(batch_id):
+        return _tool_result(False, True, 0.0, {"batch_id": str(batch_id), "已内置批次": known_batches()},
+                            _unknown_batch_brief(batch_id), True)
     suspects = [s.to_dict() for s in validate_records(_demo_records(batch_id))]
     brief = (f"P2 录入自查：{len(suspects)} 条待人工确认"
              + ("（" + "；".join(s["item"] for s in suspects) + "）" if suspects else "，无疑点"))
@@ -159,6 +185,9 @@ def judge_batch(batch_id: str = DEMO_BATCH_DEFAULT) -> dict:
     """代码硬判定：models.compare() 逐项比大小并附引用；不产出放行结论。"""
     if not _is_demo(batch_id):
         return _tool_result(False, True, 0.0, {}, "拒绝：只接受 DEMO- 假批次", True)
+    if not _demo_known(batch_id):
+        return _tool_result(False, True, 0.0, {"batch_id": str(batch_id), "已内置批次": known_batches()},
+                            _unknown_batch_brief(batch_id), True)
     verdicts = []
     for r in _demo_records(batch_id):
         try:
@@ -180,6 +209,9 @@ def build_report(batch_id: str = DEMO_BATCH_DEFAULT) -> dict:
     """生成 HTML 到 runs/<batch_id>/report.html；不写 qc_daily_data/reports/。"""
     if not _is_demo(batch_id):
         return _tool_result(False, True, 0.0, {}, "拒绝：只接受 DEMO- 假批次", True)
+    if not _demo_known(batch_id):
+        return _tool_result(False, True, 0.0, {"batch_id": str(batch_id), "已内置批次": known_batches()},
+                            _unknown_batch_brief(batch_id), True)
     out_dir = _SESSION.get("out_dir") or _runs_dir(batch_id)
     os.makedirs(out_dir, exist_ok=True)
     path = os.path.join(out_dir, "report.html")
@@ -496,12 +528,22 @@ def run(question: str, batch_id: str = DEMO_BATCH_DEFAULT) -> dict:
     _SESSION["stop_reason"] = stop_reason
 
     report_path = _SESSION["results"].get("build_report", {}).get("data", {}).get("path", "")
+    # 哪个工具把这次拦下来的、它当时怎么说的，原样带出去。
+    # 前端只会说「没跑成」，但「没跑成」有七种原因，把工具的拒答原话带出去，
+    # 卡片才能说人话（夜测 2026-11-12 r02：DEMO-002 被拒，卡片却只说「没有可判的指标记录」）。
+    reject_brief = ""
+    if stop_reason == "rejected":
+        for _name in ("lookup_limit", "validate_record", "judge_batch", "build_report"):
+            _r = _SESSION["results"].get(_name) or {}
+            if _r.get("reject"):
+                reject_brief = str(_r.get("brief") or "")
+                break
     _write_summary(state, sections, stop_reason, llm_used, report_path, summary_path)
     return {
         "ok": True, "batch_id": batch_id, "question": question,
         "sections": sections, "stop_reason": stop_reason, "llm_used": llm_used,
         "steps": state["step"], "tools_called": state["tools_called"],
-        "context_truncated": state["context_truncated"],
+        "context_truncated": state["context_truncated"], "reject_brief": reject_brief,
         "trace_path": trace_path, "summary_path": summary_path, "report_path": report_path,
         "data_scope": DATA_SCOPE,
     }

@@ -37,8 +37,22 @@ class TestAttentionFilter(unittest.TestCase):
         """接近限值不得成为逐条展示条件，否则日报会退化成全量罗列。"""
         names = [n for n, _ in ATTENTION_RULES]
         self.assertNotIn("接近限值", names)
-        self.assertEqual(len(names), 3)
+        # 2026-11-12 新增「版本不一致 / 未判」：表内 2025 / 本版 2009 结论会翻转的项
+        # 必须单独点名，不能混进「真值未知」。这里只锁「不许把接近限值列成逐条展示条件」，
+        # 不再锁死规则条数，免得以后加一条正当规则就把测试弄红。
+        self.assertGreaterEqual(len(names), 3)
+        self.assertIn("版本不一致 / 未判", names)
         self.assertGreaterEqual(NEAR_LIMIT_RATIO, 0.8)
+
+    def test_version_conflict_is_listed_separately(self):
+        """版本不一致导致的「不判」要单列，别和「实测值读不懂」混成一句。"""
+        rows = [rec("B1", "谷外糙米", 3.0, 4.0, "不判", 0.75)]
+        rows[0]["version_conflict"] = "表内 2025 给 ≤4.0，本版 2009 给 ≤2.0"
+        att, normal, counts, _near = _attention_rows(rows, [])
+        self.assertEqual(len(att), 1)
+        self.assertEqual(counts["版本不一致 / 未判"], 1)
+        self.assertEqual(counts["真值未知 / 不判"], 0)
+        self.assertIn("版本不一致 / 未判", att[0][0])
 
     def test_suspect_row_is_listed_even_if_verdict_ok(self):
         rows = [rec("B1", "出糙率", 78.2, 75.0, "合格", 0.96)]

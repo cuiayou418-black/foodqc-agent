@@ -120,7 +120,11 @@ class TestMissingDatesIsNotAMismatch(unittest.TestCase):
         self.assertNotIn("不匹配", msg)
         self.assertIn("一行可判定的记录都没读出来", msg)
         self.assertEqual(code, "no_rows")
-        self.assertIn("实测值要写数字", nxt)
+        # 2026-11-15 白天按台账改口径：旧句「实测值改成数字后重传」会把
+        # 「＜0.5 / 未检出 / ND」这类合法写法也劝人改掉，改的是原始记录、
+        # 结论还会从「不判」翻成「合格」（夜测 11-13/14/15 连续四晚）。
+        # 断言跟着改为锁「不许劝改原始记录」，不锁旧错话的字面。
+        self.assertIn("不要为了上传改原始记录", nxt)
 
     def test_rows_but_no_date_blames_the_date_column_format(self):
         msg, nxt, code = diagnose_missing_dates([], no_rows=False)

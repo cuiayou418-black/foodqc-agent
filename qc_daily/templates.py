@@ -8,6 +8,7 @@
 """
 from __future__ import annotations
 
+import re
 from html import escape
 
 from .models import DailyMetrics
@@ -78,6 +79,8 @@ footer.report-foot { margin-top: 30px; padding-top: 12px; border-top: 1px solid 
 ATTENTION_RULES = [
     ("超标 / 低于下限", "代码判定为「不合格」（实测值越过限值）"),
     ("真值未知 / 不判", "缺限值，或实测值含比较符 / 非数字 / 未检出 —— 系统不猜、不判"),
+    ("版本不一致 / 未判", "表内标准号那一版与本系统当前执行版，对这项给的限值相反 —— "
+                        "不判，先确认这批货该用哪一版"),
     ("录入疑点", "录入层标出的疑似敲错（只标疑点，不改数、不改判定）"),
 ]
 NEAR_LIMIT_RATIO = 0.8   # 仅用于汇总提示，不作为逐条展示条件
@@ -106,7 +109,10 @@ def _attention_rows(qc_details: list[dict], suspects: list[dict]):
         if verdict == "不合格":
             reasons.append("超标 / 低于下限")
         elif verdict == "不判":
-            reasons.append("真值未知 / 不判")
+            # 不判有两种原因，给人的下一步完全不同：一个是「这个数读不懂」，
+            # 一个是「这一项按哪版判还没定」。混成一句，人不知道该去核数值还是核版本。
+            reasons.append("版本不一致 / 未判" if str(r.get("version_conflict") or "").strip()
+                           else "真值未知 / 不判")
         if key in suspect_keys:
             reasons.append("录入疑点")
         if reasons:
@@ -160,6 +166,79 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
         f"运行编号：<code>{meta.get('run_id', '')}</code></div>")
     add("</header>")
 
+    # ---------- 判定口径：签字纸上必须自带「这些数字是在什么前提下算出来的」 ----------
+    # 卡片上说过「表内 2025 / 执行 2009」「没等级列按 3 等补齐」，以前纸上一个字没有
+    # （夜测 2026-11-15 r03/r04 一般，连续第 3 晚）。这里只摆已经存在的事实：
+    # 表内标准号取逐条出处，执行版取结构化限值库同一个源，等级假设取导入层的说明；
+    # 取不到就写「未标注」，不替人猜。两格不一致时不自动下结论，只提醒由化验室确认。
+    qc_rows_for_facts = meta.get("qc_details") or []
+    table_stds = sorted({str(r.get("standard") or "").strip()
+                         for r in qc_rows_for_facts
+                         if str(r.get("standard") or "").strip()})
+    try:
+        from .limits_resolver import load_limits, STANDARD_KEY
+        exec_std = str(load_limits()[STANDARD_KEY]["标准号"])
+    except Exception:
+        exec_std = ""
+    grade_note = ""
+    for _n in list(meta.get("import_notes") or []):
+        if ("等级" in str(_n) or "等别" in str(_n)) and "补" in str(_n):
+            grade_note = str(_n)[:160]
+            break
+    if not grade_note:
+        for _a in (m.alerts or []):
+            _at = f"{getattr(_a, 'title', '')} {getattr(_a, 'detail', '')}"
+            if "等级" in _at and "补" in _at:
+                grade_note = _at[:160]
+                break
+    if grade_note:
+        # M5：note 原文可能带「文件名.xlsx[sheet] ⚠️【等级】」这类工程前缀，
+        # 原样印进签字纸让化验室看到一堆技术味的文件名（夜测 11-21 r03）。
+        # 只取真正要说的那句（从【等级】或「表里没有」起），前缀去掉。
+        _cut = re.split(r"【等级】|表里没有|表里缺", grade_note, maxsplit=1)
+        if len(_cut) == 2:
+            _rest = _cut[1].lstrip(" ⚠️:：")
+            # 切点若是「表里没有/表里缺」本身，剩余部分已经不含它，要补回去；
+            # 切点若是「【等级】」，后面通常紧跟「表里没有…」，不能重复补。
+            if _cut[0].strip() and "【等级】" not in grade_note[:12] \
+                    and not re.match(r"^(表里没有|表里缺)", _rest):
+                grade_note = "表里没有" + _rest
+            else:
+                grade_note = _rest
+        grade_note = grade_note.strip(" ⚠️:：")[:160]
+    # G2：宽表缺「标准号」列时，importer 会把执行版标准号补进每一行的 standard，
+    # 于是旧版 facts 印「表内标准号：GB 1350—2009」并挂「两格若不一致」图例——
+    # 可表里那一列根本是空的，签字人以为表内写了版本（夜测 11-21 r03/r04，第 6–8 晚）。
+    # 不新增跨层字段（importer→sqlite→QCRecord→to_dict 五层，风险过大），改展示口径：
+    # 说「判定依据」而非「表内」，并明说标准号列为空时是系统按执行版补齐。
+    facts = [f"判定依据标准号：{'、'.join(table_stds) if table_stds else '执行版（见下行）'}"]
+    if exec_std:
+        facts.append(f"系统执行版：{exec_std}（限值已逐格核对并经人工复核）")
+    if table_stds and exec_std:
+        # 只在表内标准号与执行版「不同」时才提示版本确认；两者相同（典型是系统补齐）
+        # 再挂「两格若不一致」图例，等于暗示表里有个相反版本在等确认，是假警报。
+        def _norm(s):
+            return re.sub(r"[\s\u00a0]", "", str(s)).replace("—", "-").replace("－", "-").upper()
+        _diff = [s for s in table_stds if _norm(s) != _norm(exec_std)]
+        if _diff:
+            facts.append("表内标注与执行版不同，适用版本须由化验室确认")
+        else:
+            facts.append("标准号列为空时，由上表执行版补齐，非表内原文")
+    n_conf = len(meta.get("version_conflicts") or [])
+    if n_conf:
+        facts.append(f"本批 {n_conf} 项涉两版差异、结论会翻转，已改为「不判」")
+    # 口径澄清：正文「今日共 N 项次」是本次上传这一批；趋势图的「当日」是当天
+    # 全部运行合并值（11-21 S2 修完后两者可能不同，不写清楚又被读成「一张纸两个数」）。
+    _roll = getattr(m, "daily_rollup", None) or {}
+    if _roll.get("run_count", 0) > 1:
+        facts.append(f"正文「今日」= 本次上传的这一批；趋势图「当日」= 当天 "
+                     f"{_roll['run_count']} 次运行合并（{_roll['total_tests']} 项次），两者口径不同")
+    if grade_note:
+        facts.append(f"等级假设：{grade_note}")
+    add("<div class='trace' style='margin:8px 0 14px'>"
+        "<b>本报告的判定口径（这些数字是在什么前提下算出来的）</b><br>"
+        + "　|　".join(escape(x) for x in facts) + "</div>")
+
     # ---------- 标准版本警告（报告顶部置顶，未核对时不可跳过） ----------
     banner = meta.get("warning_banner", "")
     if banner:
@@ -183,23 +262,42 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
     attention_batches = sorted({str(r.get("batch_id", "")) for _, r in attention})
     fail_n = sum(1 for _, r in attention if r.get("verdict") == "不合格")
     nojudge_n = sum(1 for _, r in attention if r.get("verdict") == "不判")
+    ver_n = sum(1 for _, r in attention
+                if r.get("verdict") == "不判" and str(r.get("version_conflict") or "").strip())
+
+    # 导入层跳过的行（如 ＜0.5、未检出）从不进 qc_all，旧版结论行说
+    # 「不判 0 项次、录入疑点 0 项次」、分母只算进判定的行——漏掉的行在结论里
+    # 彻底隐形，签字人以为「没出现=没问题」（夜测 11-21 r05 严重项）。
+    # 从导入层已写好的总账 note 里解析「共 N 行 / M 行没进判定」，补进结论。
+    _skip_line = ""
+    for _n in (meta.get("import_notes") or []):
+        _m = re.search(r"本表共\s*(\d+)\s*行数据，?(?:其中\s*)?(\d+)\s*行.*?没进判定", str(_n))
+        if _m:
+            _total_rows, _skipped = int(_m.group(1)), int(_m.group(2))
+            if _skipped > 0:
+                _skip_line = (f"<br><b style='color:#c0392b'>另有 {_skipped} 行因写法无法判定、"
+                              f"未纳入上面 {len(qc_all)} 项次</b>（本表共 {_total_rows} 行），"
+                              "详见文末「未参与判定的记录」，请人工补数或判读。")
+            break
 
     add("<h2>今日结论（结果导向）</h2>")
     if attention:
         lead = (f"今日共 <b>{len(qc_all)}</b> 项次纳入判定：<b>{fail_n}</b> 项次超标（涉及 "
                 f"<b>{len(attention_batches)}</b> 个批次）需逐条核对；"
-                f"真值未知不判 <b>{nojudge_n}</b> 项次、录入疑点 "
+                f"不判 <b>{nojudge_n}</b> 项次"
+                + (f"（其中 {ver_n} 项是限值版本不一致、结论会翻转）" if ver_n else "")
+                + f"、录入疑点 "
                 f"<b>{reason_counts['录入疑点']}</b> 项次。<br>"
                 f"其余 <b>{normal_n}</b> 项次在限值内、未超标，<b>不单独展示</b>"
                 f"（其中 {near_only} 项次接近限值但未超标，仅在此提示，不逐条列）。")
-        add(f"<div class='notice'>{lead}<br>"
+        add(f"<div class='notice'>{lead}{_skip_line}<br>"
             "<b>需人工处理：</b>下面「需关注明细」逐条给出实测值、限值、标准号与出处；"
             "Agent 只把该看的行指出来，<b>不放行、不替代签字</b>，收不收由人定。</div>")
     else:
         near_note = (f"其中 {near_only} 项次接近限值但未超标，仅作提示。" if near_only else "")
         add(f"<div class='notice'>今日 {len(qc_all)} 项次全部在限值内、未超阈值，"
             f"无超标、无录入疑点、无真值未知项。{near_note}"
-            "<b>明细不逐条罗列。</b>放行仍以人工复核签字为准。</div>")
+            f"{_skip_line}<br><b>明细不逐条罗列。</b>放行仍以人工复核签字为准。</div>")
 
     # 筛选条件与最终展示范围（必须写在日报里，让看的人知道为什么只看到这几行）
     rule_lines = "".join(
@@ -211,7 +309,8 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
     add(f"<p style='margin:4px 0'><b>最终展示范围</b>：本次逐条展示 "
         f"<b>{len(attention)}</b> 条需关注记录"
         f"（超标 {reason_counts['超标 / 低于下限']} · 真值未知/不判 "
-        f"{reason_counts['真值未知 / 不判']} · 录入疑点 {reason_counts['录入疑点']}，"
+        f"{reason_counts['真值未知 / 不判']} · 版本不一致/未判 "
+        f"{reason_counts['版本不一致 / 未判']} · 录入疑点 {reason_counts['录入疑点']}，"
         f"同一条可同时命中多条）；其余 <b>{normal_n}</b> 条未超标项<b>不单独展示</b>，"
         "只作本段汇总说明，不在任何明细表中逐条罗列。</p>")
     add(f"<p style='margin:4px 0'><b>特别说明</b>：另有 <b>{near_only}</b> 项次"
@@ -276,6 +375,12 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
     # ---------- 一、合格率分析 ----------
     add("<h2>一、合格率分析</h2>")
     add("<h3>分产品合格率</h3>")
+
+    def _qty(v) -> str:
+        # 没采集到生产记录时，0 是「算不出来」不是「产量为零」，和 KPI 同口径打「—」
+        # （夜测 2026-11-12 r03 一般③）。先算成字符串再进 f-string：
+        # `{v:g if has_prod else '—'}` 会把条件表达式当成格式说明符，运行时才炸。
+        return f"{v:g}" if has_prod else "—"
     add("<table><tr><th>产品</th><th class='num'>批次</th><th class='num'>检测项次</th>"
         "<th class='num'>不合格项次</th><th class='num'>项目合格率</th><th class='num'>一次交验合格率</th>"
         "<th class='num'>计划产量(t)</th><th class='num'>实际产量(t)</th></tr>")
@@ -285,12 +390,14 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
             f"<td class='num'>{p.total_tests}</td><td class='num'>{p.fail_tests}</td>"
             f"<td class='num'>{_pct(p.pass_rate)}</td>"
             f"<td class='num'>{_pct(p.batch_pass_rate) if has_prod else '—'}</td>"
-            f"<td class='num'>{p.planned_qty:g}</td><td class='num'>{p.actual_qty:g}</td></tr>")
+            f"<td class='num'>{_qty(p.planned_qty)}</td>"
+            f"<td class='num'>{_qty(p.actual_qty)}</td></tr>")
     add(f"<tr style='font-weight:700'><td>合计</td><td class='num'>{m.batch_count if has_prod else '—'}</td>"
         f"<td class='num'>{m.total_tests}</td><td class='num'>{m.fail_tests}</td>"
         f"<td class='num'>{_pct(m.pass_rate)}</td>"
         f"<td class='num'>{_pct(m.batch_pass_rate) if has_prod else '—'}</td>"
-        f"<td class='num'>{m.planned_qty:g}</td><td class='num'>{m.actual_qty:g}</td></tr></table>")
+        f"<td class='num'>{_qty(m.planned_qty)}</td>"
+        f"<td class='num'>{_qty(m.actual_qty)}</td></tr></table>")
 
     # 只列需要关注的项目；全部合格的项目汇总成一句，不逐条列（结果导向、避免全量罗列）
     add("<h3>分检测项目（仅列需关注项）</h3>")
@@ -332,7 +439,16 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
                 f"<td>{escape(str(r.get('limit_source', '')))}</td></tr>")
         add("</table>")
     else:
-        add("<div class='notice'>今日无需关注记录（无超标、无接近限值、无录入疑点、无真值未知项）。</div>")
+        # 这句常量同时承担四个断言，只要「接近限值」不为 0 就是假话：
+        # 同一份日报上一段写「54 项次接近限值」、这一段写「无接近限值」
+        # （11-14 r04 / 11-15 r03 / r04 连续三晚）。near_only 由 _attention_rows
+        # 按同一份展示口径算出，不再另起一个算法、也不各自重算。
+        if near_only:
+            add(f"<div class='notice'>今日无需逐条列出的关注记录（无超标、无不判、"
+                f"无录入疑点、无真值未知项）；另有 <b>{near_only}</b> 项次接近限值但未超标，"
+                "按展示口径只在上方汇总提示，不逐条列。</div>")
+        else:
+            add("<div class='notice'>今日无需关注记录（无超标、无接近限值、无录入疑点、无真值未知项）。</div>")
 
     # ---------- 未参与判定的记录 ----------
     # 这些行在导入时就被跳过了（公式没存结果 / 写了比较符或未检出），根本没进判定。
@@ -397,9 +513,16 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
     add("<h2>四、趋势分析</h2>")
     if len(m.trend_points) >= 2:
         add(f"<h3>近 {len(m.trend_points)} 日合格率走势（{m.trend_summary.get('comment', '')}）</h3>")
+        def _abn(tp) -> str:
+            # 无生产记录时当日「异常批次 0」是算不出来的 0，不是「0 个异常」；
+            # 与同一行的「不合格 2 项次」并排，会让人读成「今天没异常」
+            # （夜测 2026-11-12 r03 一般③）。跟 KPI 同口径打「—」。
+            today = str(tp.date) == str(m.report_date)
+            return "—" if (today and not has_prod) else str(tp.abnormal_batches)
+
         for tp in m.trend_points:
             add(_bar(tp.date, tp.pass_rate, 1.0,
-                     f"合格率 {_pct(tp.pass_rate)} · 不合格 {tp.fail} 项次 · 异常批次 {tp.abnormal_batches}",
+                     f"合格率 {_pct(tp.pass_rate)} · 不合格 {tp.fail} 项次 · 异常批次 {_abn(tp)}",
                      cls="bad" if tp.pass_rate < 0.95 else ("warn" if tp.pass_rate < 0.98 else "")))
         add("<table><tr><th>日期</th><th class='num'>合格率</th><th class='num'>检测项次</th>"
             "<th class='num'>不合格项次</th><th class='num'>异常批次</th></tr>")
@@ -407,8 +530,10 @@ def render_html(m: DailyMetrics, meta: dict) -> str:
             cls = " class='fail'" if tp.fail else ""
             add(f"<tr{cls}><td>{tp.date}</td><td class='num'>{_pct(tp.pass_rate)}</td>"
                 f"<td class='num'>{tp.total}</td><td class='num'>{tp.fail}</td>"
-                f"<td class='num'>{tp.abnormal_batches}</td></tr>")
+                f"<td class='num'>{_abn(tp)}</td></tr>")
         add("</table>")
+        add("<p class='hint'>「异常批次」含接近限值但未超标的批次，不等于「有不合格项的批次」；"
+            "当日没有生产记录时该列打「—」，不代表当日无异常。</p>")
         # 分项目均值趋势
         item_names = sorted({t.item for t in m.item_trend})
         if item_names:

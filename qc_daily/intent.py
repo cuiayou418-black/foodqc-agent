@@ -77,7 +77,7 @@ def capability_answer() -> dict:
         "examples": [
             "DEMO-001 这批稻谷出糙率 76.5 能收吗",
             "出糙率 3 等限值是多少，依据哪一条",
-            "DEMO-002 水分 1.45 是不是敲错了",
+            "DEMO-001 水分含量 145 是不是敲错了",
             "整精米率和出糙率有什么区别",
         ],
     }
@@ -103,7 +103,7 @@ _CONCEPT_NOTES = [
             "具体限值仍须人工核对标准原文后方可用于判定",
         ],
         "examples": ["出糙率 3 等限值是多少，依据哪一条",
-                     "DEMO-003 整精米率 80 比出糙率 72 还高，可疑吗"],
+                     "籼稻谷 1 等 出糙率限值是多少"],
     },
 ]
 
@@ -123,6 +123,46 @@ def _concept_note(question: str) -> dict | None:
                 "prose": True,
             }
     return None
+
+
+def _row_cat_ok(clean: str, cats: list[str]) -> bool:
+    """表格「行级」物类闸门：这一格限量是不是给所问物类的。
+
+    段级闸门（:529）挡不住整表里混着的别类行——问「大米成品的 Cd」，
+    语料表 2 三行都含「镉」全被选中，其中「谷物（稻谷除外）≤0.1」和
+    「谷物碾磨加工品［糙米、大米（粉）除外］≤0.1」并不适用于大米，
+    0.2 与 0.1 并排，0.15 的大米样照哪行判会是相反结论（夜测 11-17 r01 一般）。
+    规则：带「所问物类除外 / 所问物类除外」标记的排外行一律不贴；
+    其余行只要明说含所问物类，或没提任何别的物类（通用行），才留。
+    """
+    if not cats:
+        return True
+    wanted = [c for c in cats if c in _CATEGORY]
+    if not wanted:
+        return True
+    # 所问物类 + 它的上位词（稻谷→谷物）：GB 2762 表 1 写「谷物及淀粉类制品」，
+    # 不会逐条重述「稻谷」，只认原词会把唯一正确的 ≤0.5 行误杀（本轮实测踩到）。
+    kin = set(wanted)
+    for c in wanted:
+        kin.update(_CAT_PARENTS.get(c, ()))
+    # 排除标记：语料有全角/半角、圆/方括号混用且嵌套（「［糙米、大米（粉）除外］」），
+    # 解析嵌套括号纯属给自己挖坑（本轮连翻两次车）。改用最笨也最稳的办法：
+    # 凡行里出现「除外」，看它之前那一小段里有没有所问物类（含上位词）——
+    # 「谷物（稻谷除外）」「糙米、大米（粉）除外」都能命中，不依赖括号配对。
+    if "除外" in clean:
+        for seg in clean.split("除外"):
+            head = seg[-40:]          # 「除外」前最近的一段字
+            if any(c in head for c in kin):
+                return False
+    if any(c in clean for c in kin):
+        return True
+    # 没提所问物类（含上位词），却点名了别的食品类别 → 不贴。
+    # _CATEGORY 没覆盖「肉类」这类词，补一组常见动物/植物性食品兜底，
+    # 免得问稻谷却把 ≤0.05 的肉类汞行贴出来。
+    _FOOD_OTHER = ("肉类", "蛋类", "乳", "水产", "鱼类", "蔬菜", "水果", "豆类",
+                   "坚果", "油脂", "饮料", "调味品")
+    others = [c for c in _CATEGORY if c not in kin] + [c for c in _FOOD_OTHER if c not in kin]
+    return not any(c in clean for c in others)
 
 
 def _table_cells(line: str) -> str:
@@ -156,7 +196,21 @@ _BUSINESS_SCOPE = {"玉米": "油化", "大豆": "油化", "小麦": "不做"}
 #: 不把 PDF 压平、栏位错位的原文整段贴给人（夜测 2026-11-11 r02 一般②）。
 _FOREIGN_TABLE_CATS = ("水产动物", "鱼类", "新鲜蔬菜", "食用菌", "松茸", "木耳",
                        "肉类", "乳类", "蛋类", "水果", "坚果", "饮料", "调味品",
-                       "婴幼儿", "藻类", "贝类", "甲壳类", "罐头", "焙烤")
+                       "婴幼儿", "藻类", "贝类", "甲壳类", "罐头", "焙烤",
+                       # GB 2762 原文写的是「肉及肉制品 / 乳及乳制品 / 豆类及其制品」，
+                       # 词表里只有「肉类 / 乳类」时，问铬的表 7 只数到 2 个异类
+                       # （水产动物 + 新鲜蔬菜），整表折叠的 ≥3 门槛不触发，
+                       # 蔬菜 0.5 / 水产 2.0 就被当成稻谷的限值贴出来
+                       # （夜测 11-16 r02 / 11-17 r02 一般项，复发 2 晚）。
+                       "豆类", "肉及肉制品", "乳及乳制品")
+
+#: 段落级物类闸门的上位类映射，只放宽「稻谷验收」这条业务线。
+#: GB 2762 表 1 写的是「谷物及淀粉类制品」，不会逐条重述「稻谷」二字；
+#: 老闸门只认 cats 里的原词，于是问「稻谷的铅」时把唯一带 ≤0.5 的表行筛掉，
+#: 只剩讲油脂的脚注 —— 问稻谷、答油脂（夜测 11-14 r02 / 11-15 r01 严重③）。
+#: 不扩到「大米」等其它物类，免得把越界问法一起放进来。
+_CAT_PARENTS = {"稻谷": ("谷物",), "糙米": ("谷物",),
+                "籼稻谷": ("谷物",), "粳稻谷": ("谷物",)}
 
 
 def _business_scope_answer(cat: str) -> dict:
@@ -190,8 +244,8 @@ def _business_scope_answer(cat: str) -> dict:
         "boundary": [
             "已收录：GB 1350 稻谷质量要求、GB 2716/2761/2762 已核对条目、检验方法与术语",
             "范围外：玉米 / 大豆（油化榨油原料，非米粮部原粮验收）、小麦 / 面粉（本厂化验室不测）",
-            "待补：大米成品指标（GB/T 1354—2018）、GB 2762 尚未逐格核对的污染物限值",
-            "真实批次与实测值不进本系统",
+            "待补：大米成品指标（GB/T 1354—2018）；GB 2762 的镉/铅/汞已从 PDF 逐格抽取，但尚未与化验室受控纸质本对照",
+            "系统只按 DEMO- 前缀判断假批次；实测值无法判真假，请勿上传真实数据",
         ],
         "examples": capability_answer()["examples"],
     }
@@ -217,6 +271,11 @@ def _present_para(para: str) -> str:
     p = re.sub(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", r"\1", p)
     p = re.sub(r"`([^`]*)`", r"\1", p)
     p = re.sub(r"\s*\n\s*", " ", p).strip()
+    # PDF 抽取在表格脚注后常留一串孤立页码（「b 稻谷以糙米计。 4. 3. 2 …」），
+    # 贴到答案尾巴就是「4. 4.」，看着像系统吐了一半崩了
+    # （夜测 2026-11-12 r02 一般②，残渣来自语料不是代码截断）。
+    # 只清「连续两个以上 数字+句点」的碎片，不碰「0. 1」这类被 PDF 拆开的限值数字。
+    p = re.sub(r"(?:^|\s)(?:\d{1,3}\.)(?:\s+\d{1,3}\.)+(?=\s|$)", " ", p).strip()
     if len(p) <= 260:
         return p
     # 硬切 260 字会切在半个词上（夜测 2026-11-11 r02：「木耳」被切成「木」，
@@ -311,6 +370,28 @@ def _mixed_quality_tables(question: str, hits: list[str]) -> bool:
             and "出糙率" in blob and "水分含量" in blob)
 
 
+#: 中文数字等别 → 语料键。「一等」「1 等」「第1等」「壹等」都会出现，写法不统一。
+_GRADE_CN = {"一": "1", "二": "2", "三": "3", "四": "4", "五": "5",
+             "壹": "1", "贰": "2", "叁": "3", "肆": "4", "伍": "5"}
+_GRADE_RE = re.compile(r"第?\s*([1-5一二三四五壹贰叁肆伍])\s*等")
+
+
+def parse_grade(question: str) -> str:
+    """从问句里取等别。取不到返回空串 —— 不假装问过。
+
+    夜测 2026-11-12 r01 严重①：`籼稻谷 1 等 出糙率限值` 与「3 等」逐字同答，
+    都给 ≥75.0（3 等口径），而 1 等应为 ≥79.0。差 4 个百分点、方向是**放宽**，
+    而这两项（出糙率 / 整精米率）恰恰是 GB 1350 的定等指标。
+    根因是取值处写死 grade="3"，全库没有等别解析。
+    """
+    m = _GRADE_RE.search(str(question or ""))
+    if not m:
+        # 「等外」也认：原表该档写「—」，由 resolve_limit 抛「不要求」，比默默给 3 等好
+        return "等外" if "等外" in str(question or "") else ""
+    g = m.group(1)
+    return _GRADE_CN.get(g, g)
+
+
 def _clarify_answer(question: str, must: list[str], cats: list[str]) -> dict:
     """同一指标两张表、问题没说清物类 → 反问；说清了 → 给当前执行版那一格。
 
@@ -323,28 +404,91 @@ def _clarify_answer(question: str, must: list[str], cats: list[str]) -> dict:
     cat = f"（{cats[0]}）" if cats else ""
 
     cultivar = "粳" if "粳" in question else ("籼" if "籼" in question else "")
+    grade_in_q = parse_grade(question)
+    # ⚠️ 11-12 曾在这里写死「GB 1350—2009 只有 1/2/3 等与等外」，问 4/5 等一律
+    # 回「没有这一等」——**这是事实错误**（DECISIONS_2026-11-12 §2 第 17 项，现作废）。
+    # corpus/GB1350_稻谷质量要求.md:20/38 与 limits.json 表1/表2 都写着
+    # 等级体系 = 1/2/3/4/5/等外，4 等出糙率 ≥73.0、5 等 ≥71.0。
+    # 现在一律走结构化取值，不拿 3 等的数顶，也不许谎称没有这一档（夜测 11-15 r01 严重①）。
+    grade = grade_in_q or "3"          # 3 等 = 语料「定等规则」里的中等，仅作没写等别时的兜底
+    grade_label = grade if grade == "等外" else f"{grade} 等"
     if cultivar:
         product, table = ("粳稻谷", "表2") if cultivar == "粳" else ("籼稻谷", "表1")
         try:
             from .limits_resolver import build_products, load_limits
-            items = build_products(load_limits(), grade="3")[product]["items"]
+            built = build_products(load_limits(), grade=grade)[product]
+            items = built["items"]
             key = next((m for m in must if m in items), None)
             if key is None:
                 key = next((t for t in indicators() if t in question and t in items), None)
+            if key is None and grade_in_q:
+                # 这一档这一项原表写「—」（如等外的整精米率）：明明有答案却落回
+                # 「先确认物类」，或整档被说成「原表没给数值」，都是答非所问
+                # （夜测 2026-11-15 r01 严重②）。build_products 现在逐项容错，
+                # 「—」的项单列在 not_required 里。
+                nr = next((x for x in (built.get("not_required") or [])
+                           if x["item"] in str(question)), None)
+                if nr:
+                    return {
+                        "title": f"{product}「{nr['item']}」{grade_label}：原表不要求",
+                        "lines": [
+                            f"GB 1350 {table} 里 {grade_label}，「{nr['item']}」原文写的是「—」，"
+                            "即这一项在这一档不要求；不能拿别的等别那一格顶上。",
+                            f"出处：{nr['limit_source']}。",
+                            "要确认这一档实际怎么执行，翻化验室现行手册或问班长。",
+                        ],
+                        "boundary": [b for b in [
+                            _version_notice(),
+                            "数值取自 corpus/limits.json → GB1350-2009 结构化条目，已逐格核对",
+                        ] if b],
+                        "examples": [f"籼稻谷 {grade_label} 出糙率限值是多少",
+                                     "籼稻谷 3 等 整精米率限值是多少"],
+                    }
             if key:
                 spec = items[key]
+                lines = [f"{key}：{spec['expr']}{spec['unit']}（{table}，{grade_label}）。",
+                         f"出处：{spec['limit_source']}。"]
+                # 问句没写等别时不许默不作声地按 3 等给：这样人是拿 3 等的线在判 1 等的粮。
+                # 只有真随等别变的指标才需要这句提醒（水分 / 杂质这类各等级同值）。
+                if spec.get("kind") == "graded_lower":
+                    if grade_in_q:
+                        lines.append(f"这条随等别变：你问的是 {grade_label}，上面就是 "
+                                     f"{grade_label}那一格；换成别的等别数值会不同。")
+                    else:
+                        lines.append("这条限值**随等别变**，你问题里没写等别，现按 3 等（中等）给；"
+                                     "如果这批是按 1 等 / 2 等收购，把等别写进问题"
+                                     "（例如「籼稻谷 1 等 出糙率限值」），我再给对应那一档。")
+                else:
+                    lines.append("这项各等级同值，等别不影响数值。")
+                # 问句没写等别时，标题别印成「3 等」——那是兜底默认档，不是用户问的档；
+                # 签字人扫一眼标题就以为这批按 3 等，而 1 等的线差 4 个百分点
+                # （夜测 11-20 r01 M2）。lines 里已有同款提醒，标题同步标清。
+                _title_grade = grade_label if grade_in_q else f"默认{grade_label}"
                 return {
-                    "title": f"{product}「{key}」限值 · {spec['standard']} {table}",
-                    "lines": [
-                        f"{key}：{spec['expr']}{spec['unit']}（{table}，3 等口径）。",
-                        f"出处：{spec['limit_source']}。",
-                    ],
+                    "title": f"{product}「{key}」限值 · {spec['standard']} {table} {_title_grade}",
+                    "lines": lines,
                     "boundary": [b for b in [
                         _version_notice(),
                         "数值取自 corpus/limits.json → GB1350-2009 结构化条目，已逐格核对；语料片段摘录仍以原文为准",
-                        "真实批次与实测值不进本系统",
+                        "系统只按 DEMO- 前缀判断假批次；实测值无法判真假，请勿上传真实数据",
                     ] if b],
-                    "examples": ["出糙率 3 等限值是多少", "把这张表做成今天的日报"],
+                    "examples": ["籼稻谷 1 等 出糙率限值是多少",
+                                 "籼稻谷 3 等 出糙率限值是多少",
+                                 "把这张表做成今天的日报"],
+                }
+        except (KeyError, ValueError):
+            # 「—（不要求）」或该档不存在：说清是哪一档没有数值，别拿别的档顶。
+            # （等外档的整精米率原表就是「—」，此处不是异常，是原表的说法。）
+            if grade_in_q:
+                return {
+                    "title": f"{product}「{item}」{grade_label}：原表没给数值",
+                    "lines": [
+                        f"GB 1350 {table} 里 {grade_label}，原文写的不是数字"
+                        "（原表是「—」，即该项在这一档不要求），不能拿别的档的数值顶上。",
+                        "要确认这一档实际怎么执行，翻化验室现行手册或问班长。",
+                    ],
+                    "boundary": [_version_notice(), "系统只按 DEMO- 前缀判断假批次；实测值无法判真假，请勿上传真实数据"],
+                    "examples": ["籼稻谷 3 等 出糙率限值是多少"],
                 }
         except Exception:
             pass          # 结构化限值取不到就落回反问，绝不编数
@@ -354,7 +498,10 @@ def _clarify_answer(question: str, must: list[str], cats: list[str]) -> dict:
         "lines": [
             f"GB 1350 里「{item}」分两张表：表1 是早籼 / 晚籼 / 籼糯稻谷，"
             "表2 是粳稻谷、粳糯稻谷，部分指标两表数值不同、部分相同。",
-            "你验的是籼稻还是粳稻？请把品种连着指标一起问，例如「籼稻谷水分限值是多少」，"
+            # 举例必须跟着被问的指标走：问出糙率却拿「水分」举例，等于把人往岔路上引
+            # （夜测 11-14 r01/r02、11-15 r01 轻微，连记三晚）。
+            f"你验的是籼稻还是粳稻？请把品种连着指标一起问，"
+            f"例如「籼稻谷{must[0] if must else '水分含量'}限值是多少」，"
             "我就给当前执行版对应那一格。",
             "现在不并列贴两个数，也不替你挑一个 —— 挑错表就是拿错限值，"
             "这恰恰是最不该由系统代做的判断。",
@@ -362,7 +509,7 @@ def _clarify_answer(question: str, must: list[str], cats: list[str]) -> dict:
         "boundary": [b for b in [
             "检索到的原文同时含表1与表2，属低置信度命中，按四条原则转人工确认",
             _version_notice(),
-            "真实批次与实测值不进本系统",
+            "系统只按 DEMO- 前缀判断假批次；实测值无法判真假，请勿上传真实数据",
         ] if b],
         "examples": ["先确认这批来料是籼稻还是粳稻",
                      "查化验室手册里这批的品种与定等依据",
@@ -430,7 +577,9 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
                 # 例外：整份文件就是讲这个物类时（文件名带「稻谷」），段落里不会逐条重复写，
                 # 不能按段落卡——否则 GB 1350 整份被自己过滤掉，问「稻谷水分限值」直接拒答
                 if cats and not any(c in para for c in cats):
-                    if not any(c in path.name for c in cats):
+                    parents = tuple(p for c in cats for p in _CAT_PARENTS.get(c, ()))
+                    parent_ok = bool(parents) and any(p in para for p in parents)
+                    if not parent_ok and not any(c in path.name for c in cats):
                         continue
                 # 表格块按行拆，只留真正命中的那几行，别把整张表糊给用户
                 if para.count("|") > 3:
@@ -443,14 +592,38 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
                         # 读起来毫无意义；这种行不当作答案，让下面的说明段落顶上
                         if clean and sum(clean.count(c) for c in ("≥", "≤")) >= 4:
                             continue
+                        # 行级物类闸门：一整张表里混着别类的限量行，段级闸门管不到。
+                        # 问大米只贴给大米的那行，「谷物（稻谷除外）」等排外行不进答案
+                        # （夜测 11-17 r01 一般）。
+                        if clean and not _row_cat_ok(clean, cats):
+                            continue
                         if clean:
                             candidates.append(clean)
                     candidates = candidates[:2]
                 else:
                     clean = _present_para(para)
-                    candidates = [clean] if clean else []
+                    # 笔记体语料把「砷 / 铬 / 亚硝酸盐」三个污染物写在同一个段落里，
+                    # 整段命中后 lines[0] 对问砷、问铬逐字相同——问砷先读到铬、问铬先读到砷
+                    # （夜测 11-16 r02 / 11-17 r02 一般，第 8 晚）。按「· 」切成句。
+                    parts = [x.strip() for x in clean.split("·") if len(x.strip()) >= 8]
+                    if must and len(parts) > 1:
+                        # 只认「句首就在讲被问实体」的那句。不能用「句中出现过这个字」——
+                        # 铬句里有「与砷同为待补项」，问砷时它也会被判成命中，
+                        # 而且带 1.0 和标准号、打分更高，反把真正的砷句挤出前三（本轮实测踩到）。
+                        mine = [x for x in parts if any(_ent_in(m, x[:14]) for m in must)]
+                        if mine:
+                            parts = mine
+                    candidates = (["· " + x for x in parts] if parts
+                                  else ([clean] if clean else []))
                 for cand in candidates:
                     score = 2 * sum(1 for t in terms if t in cand)
+                    # 句首（前 16 字，含「· 」前缀）就在答被问实体 → 强加权排第一；
+                    # 只在句中顺带提到 → 弱加权。段级打分分不出砷句 / 铬句高下。
+                    if must:
+                        if any(_ent_in(m, cand[:16]) for m in must):
+                            score += 12
+                        elif any(_ent_in(m, cand) for m in must):
+                            score += 3
                     if any(k in cand for k in ("是指", "定义", "称为", "区别", "不同于",
                                                "定等指标", "质量要求", "术语")):
                         score += 3
@@ -463,22 +636,53 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
                         score += 4
                     scored.append((score, cand[:260], path.name))
         scored.sort(key=lambda x: -x[0])
-        for _s, para, name in scored[:3]:
+        # 问「铅」却贴出整段「一级浸出大豆油：酸价 ≤0.50、过氧化值…」，
+        # 是同一份语料里另一条产品线的段落被算成命中（11-12 r01 轻微，复发 3 次）。
+        # 只在「问的是污染物、且这段通篇是油脂线指标、不含被问实体」时剔；
+        # 剔空就回退不过滤 —— 宁可多给一段，也不把唯一能答的那段删掉。
+        _asked = [c for c in _CONTAMINANTS if c in question]
+        _oil_marks = ("酸价", "过氧化值", "黄曲霉毒素", "浸出", "压榨")
+
+        def _off_topic(cand: str) -> bool:
+            return bool(_asked and any(m in cand for m in _oil_marks)
+                        and not any(c in cand for c in _asked))
+
+        _kept = [x for x in scored[:3] if not _off_topic(x[1])]
+        _pool = _kept or scored[:3]
+        foreign_rows = 0
+        for _s, para, name in _pool:
             clean = _present_para(para)
             if not clean:
                 continue
+            # 同一段笔记把「酸价 / 过氧化值 / 黄曲霉」和污染物混着写时，段里也会
+            # 出现被问的那个字（例如「③ 铅：…」），上面的预筛挡不住。但只要答案里
+            # 已经有带 ≤/≥ 的那一格，这段整段贴出来就纯属噪音 —— 不切句、不删已有
+            # 正确行，直接跳过这一段（11-12 r01 轻微，复发 3 次）。
+            if (_asked and any(m in clean for m in _oil_marks)
+                    and any(any(ch in h for ch in ("≤", "≥")) for h in hits)):
+                continue
             n_off = sum(1 for c in _FOREIGN_TABLE_CATS if c in clean)
+            # 门槛原是 ≥3（2026-11-11 拍板）。但只混进 1 行异类时（如问稻谷的汞，
+            # 「总汞｜肉类｜≤0.05」照样贴出来），使用人会把别类的限值抄成本批的值
+            # （夜测 11-15 r01 一般②、11-14 r02 一般②；QA-08 镉整表贴入同根）。
+            # 现在：带 ≤/≥ 的限量行，只要含异类类别、又不含被问物类，就不贴那个数；
+            # 整段全品类表（≥3）仍折叠成一句可行动的话。宁可少给，不可给错。
+            is_limit_row = any(ch in clean for ch in ("≤", "≥"))
+            asked_here = bool(cats and any(c in clean for c in cats))
+            if n_off >= 1 and is_limit_row and not asked_here:
+                foreign_rows += 1
+                continue
             if n_off >= 3:
-                # 拍板（2026-11-11）：不切句。目标表行可能不含被问实体，
-                # 按句过滤有把正确那行一起删掉的风险；宁可少给，不可给错。
-                # 折叠成一句能行动的话，符合「低置信度转人工」。
                 clean = (f"这里原本是 {name} 的一张全品类限量表（含 {n_off} 个与所问物类"
                          "无关的食品类别）。原文是 PDF 表格压成的一段，栏位已错位，"
                          "整表贴出来容易把别类的数抄成所问品类的值，所以我不贴；"
-                         "请核对 corpus/limits.json 里已逐格核对的结构化条目，或回原文对应表行。")
+                         "请回原文对应表行核对，或问班长。")
             hits.append(clean)
             if name not in sources:
                 sources.append(name)
+        if foreign_rows:
+            hits.append(f"另有 {foreign_rows} 行是其它食品类别的限量（与本批所问物类无关），"
+                        "未贴；需要那一格请翻原文对应表行，别拿它当本批的限值。")
 
     # 2026-11-11 切版：GB 1350 双表限值问法改为「显式判品种」，不再靠检索命中嗅探。
     # 2025 原文归档已排除出检索池，hits 不再天然同时含表1与表2，旧版
@@ -487,7 +691,31 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
     _LIMIT_WORDS = ("限值", "多少", "合格线", "几等", "限量", "上限", "下限")
     _OTHER_CATS = ("大米", "糙米", "粳米", "籼米", "米制品", "小麦", "玉米", "大豆",
                    "植物油", "油脂", "花生油", "菜籽油", "食用植物油")
-    if (any(w in question for w in _LIMIT_WORDS)
+    # 问「糙米的出糙率限值」时，检索会翻出镉的折算注、标准清单行、检验方法行
+    # 三段互不相干的文字（夜测 11-15 r01 一般①）。根子是口径：出糙率是对
+    # 稻谷定的分等指标，糙米没有这一格；「稻谷以糙米计」是污染物折算，不是另一套限值。
+    # 能靠说清楚解决，就不动判定链。
+    if any(c in cats for c in ("糙米",)) and any(
+            i in question for i in ("出糙率", "整精米率")):
+        return {
+            "title": "糙米没有独立的「出糙率 / 整精米率」限值",
+            "lines": [
+                "GB 1350—2009 的分等指标是对**稻谷**定的：出糙率是把稻谷砻谷后算糙米占比，"
+                "整精米率同理；糙米是加工后的产物，原表没有给它单独立一格限值。",
+                "GB 2762 那条「稻谷以糙米计」（注 a）是**污染物限量的折算口径**，"
+                "跟出糙率不是一回事，别把两句话拼成一个数。",
+                "要判这批粮，按稻谷问（例如「籼稻谷 3 等 出糙率限值是多少」）；"
+                "若化验室现行手册对糙米另有执行口径，以手册为准并请人工确认。",
+            ],
+            "boundary": [b for b in [_version_notice(),
+                                     "出处：GB 1350—2009 表1/表2（分等指标体系）、GB 2762—2025 注 a"] if b],
+            "examples": ["籼稻谷 3 等 出糙率限值是多少",
+                         "大米成品的Cd含量不得超过多少"],
+        }
+    # 「粳稻谷 1 等 出糙率」这类问法没有「限值」二字，但句子里点了等别，
+    # 已经在问某一档的数了。不放进来就会掉进整节检索，把表1 的籼稻数贴给问粳稻的人
+    # （夜测 2026-11-12 r01：同一句话既漏了等别、又跨了表）。
+    if ((any(w in question for w in _LIMIT_WORDS) or _GRADE_RE.search(question))
             and any(m in indicators() for m in must)
             and not any(c in _OTHER_CATS for c in cats)
             and "2025" not in question):
@@ -505,14 +733,42 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
         # 旧版写「这次没检索到带限值的表行」，可同一张卡里贴的表明写 0.35。
         # PDF 表是「—/0.35」列式、没有 ≥/≤，判据失效（夜测 11-10 r02 复发两晚）。
         # 改成不否认表里有数，只说「没逐格核对、不能拿去判」。
+        no_limit_hit = False   # 这段里连一个限值数字都没有 → 不能叫「查到的相关条款」
         if (any(w in question for w in ("限值", "多少", "合格线", "几等"))
                 and not any(any(ch in h for ch in ("≥", "≤", ">=", "<=")) for h in hits)):
-            boundary.append("上面片段里有数字，但没有可逐格核对的表行结构；"
-                            "请改用 corpus/limits.json 里已核对的结构化限值判定")
+            # 上一版只判「有没有比较符」，于是一个阿拉伯数字都没有的片段也被说成
+            # 「上面片段里有数字」（夜测 2026-11-12 r02 轻微③，问铬时贴的是砷那句话）。
+            # 有数就说有数，没数就直说没数——这句话是给人判断「能不能将就用」的。
+            # 只认「像限值的数字」：带小数（含 PDF 拆开的 0. 1）或 ≥/≤ 后跟数字。
+            # 「表 4」「第 3 等」这类序号不算，否则问铬时那段一个限值都没有，
+            # 也会被说成「上面片段里有数字」（11-12 r02 轻微③，今早那版仍漏）。
+            if any(re.search(r"\d+\.\d+|\d\.\s*\d|[≥≤]\s*\d+", h) for h in hits):
+                # 旧句「没有可逐格核对的表行结构」是假的：语料里就有 | 铅 | 谷物… |
+                # 这样的表行，只是抽进来的这段不是「所问这一项」的表行
+                # （夜测 2026-11-15 r01 严重③ / r02 轻微③）。不再否认表里有表行，
+                # 只说清「片段里的数不能当这一项的限值用」。
+                boundary.append("上面片段里有数字，但它们不是「这一项」逐格核对过的限量表行，"
+                                "不能拿去判；请翻国标原文对应表行或问班长，"
+                                "别拿片段里的数当限值用")
+                # G1：语料原句写「明写 1.0 mg/kg…这是强制项」，读起来像结论，
+                # 而底注又说「不能拿去判」——同一张卡打架（夜测 11-21 r02 一般）。
+                # 不动语料原文（可追溯），在正文最前面顶一条醒目提示，
+                # 让「数字是摘录、未核对、不能判」成为读者第一眼看到的约束。
+                hits = ["⚠️ 先说清楚：下面的数字是国标原文片段摘录，本库尚未逐格核对，"
+                        "不能当限值直接判；要判请翻原文对应表行、以化验室受控本为准或问班长。"] \
+                       + list(hits)
+            else:
+                # 别再指路 limits.json：砷/铬在这个文件里零命中，指过去等于
+                # 让人去一个没有这一项的地方找（夜测 2026-11-15 r02 轻微③）。
+                no_limit_hit = True
+                boundary.append("上面这段里一个限值数字都没有，不能拿去判；"
+                                "这一项本库还没逐格抽取（标准里可能有，属待补项），"
+                                "请翻国标原文或问班长，别拿别的物类的数顶")
         boundary.append("以上为语料片段摘录，未生成结论；限值以 corpus/limits.json 已核对的"
                         "结构化条目为准，答复须带标准版本与表号")
         return {
-            "title": "查到的相关条款",
+            "title": ("这一项还没收录，下面是相关说明" if no_limit_hit
+                      else "查到的相关条款"),
             "lines": hits,
             "boundary": boundary,
             "examples": ["整精米率和出糙率有什么区别",
@@ -527,15 +783,15 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
             "title": f"库里没有「{missing}」的限值记录",
             "lines": [
                 f"我把 corpus/ 下的语料全翻了一遍，没有找到能回答「{missing}」{cat}的段落。",
-                "这是真没有，不是我不肯答——硬凑一个别的指标的数字给你，比直接说没有危险得多。",
+                "库里还没收录这一条，不是国标没有这项要求——比如大米成品的水分，GB/T 1354—2018 里是有规定的，只是还没逐格提取进 corpus/。硬凑一个别的指标的数字给你，比直接说没有危险得多。",
                 f"补齐的办法：把写着「{missing}」限值的那份国标原文找出来，逐格核对后放进 corpus/，"
                 "再问我一次。",
             ],
             "boundary": [
                 "已收录范围：GB 1350 稻谷质量要求、GB 2716/2761/2762 中已核对的条目、"
                 "检验方法标准与术语（详见 corpus/README.md）",
-                "未收录：GB 2762 的镉、无机砷等尚未逐格核对的污染物限值",
-                "真实批次与实测值不进本系统",
+                "未收录：GB 2762 的无机砷等污染物限值（镉/铅/汞已抽取，尚未与受控纸质本对照）",
+                "系统只按 DEMO- 前缀判断假批次；实测值无法判真假，请勿上传真实数据",
             ],
             "examples": capability_answer()["examples"],
         }
@@ -547,7 +803,7 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
             "title": "这句话我没读懂",
             "lines": ["没识别出指标名、物类或批次号，所以没有去翻语料库，也不编一段给你。",
                       "换成一句具体的：比如「稻谷水分限值是多少」或「DEMO-001 出糙率 76.5 能收吗」。"],
-            "boundary": ["真实批次与实测值不进本系统"],
+            "boundary": ["系统只按 DEMO- 前缀判断假批次；实测值无法判真假，请勿上传真实数据"],
             "examples": capability_answer()["examples"],
         }
     # 拒答要点名「缺的是哪一条、哪个品类」，不能把「这个指标没入库」
@@ -557,6 +813,40 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
     # 范围外品类先分流：它们不是「还没补」，劝人补国标等于指着一条不该走的路。
     if cat in _BUSINESS_SCOPE:
         return _business_scope_answer(cat)
+    # 只给品类、没给指标：这是「缺指标」，不是「品类没收录」。
+    # 反问卡让人「把品种连着指标一起问」，用户照做只回「籼稻谷」，旧版却答
+    # 「库里没有稻谷的限值记录」——而同卡 boundary 第一行就写着「已收录 GB 1350
+    # 稻谷质量要求」，一张卡自相矛盾（夜测 11-21 r01 严重 / r06 复验，第 3 晚）。
+    # 化验室的人读到「库里没有稻谷」要么去补一份早已入库的 GB 1350，要么弃用。
+    # 这里只认已收录的稻谷系品类；大米是「待补」不在此列，仍走下面的兜底。
+    _COVERED_CAT = ("稻谷", "籼稻谷", "粳稻谷", "糙米", "籼稻", "粳稻")
+    # 「籼稻 / 粳稻」只是品种缩写，_CATEGORY 只收「稻谷」，cats 解析不出它们，
+    # 这里从原问句兜底认一次，避免只回「籼稻」仍掉进「库里没有能引用的限值」。
+    _cat_word = cat
+    if not _cat_word and not must:
+        _cat_word = next((w for w in ("籼稻谷", "粳稻谷", "籼稻", "粳稻")
+                          if w in question), "")
+    if _cat_word and not must and (_cat_word in _COVERED_CAT or cat in _COVERED_CAT):
+        show_cat = cat or _cat_word
+        names = indicators()
+        name_list = " / ".join(names)
+        return {
+            "title": f"你只说了{show_cat}，还没说要问哪一项",
+            "lines": [
+                f"{show_cat}的限值我这里收着，但要按具体指标查。已收录的指标有：{name_list}。",
+                f"你想看哪一项？这样说就行：「{show_cat}{{指标}}限值是多少」，"
+                "分品种/等别的指标（出糙率、整精米率、水分）再把籼稻或粳稻、等别带上。",
+            ],
+            "boundary": [
+                "已收录：GB 1350 稻谷质量要求（出糙率 / 整精米率 / 杂质 / 水分 / "
+                "黄粒米 / 谷外糙米 / 互混率），7 项逐格可用",
+                "分品种或等别的指标要写明籼稻 / 粳稻、第几等，否则按 3 等（中等）给并注明",
+                "范围外：玉米 / 大豆（油化榨油原料）、小麦 / 面粉（本厂不测）——不是「还没补」",
+                "系统只按 DEMO- 前缀判断假批次；实测值无法判真假，请勿上传真实数据",
+            ],
+            "examples": [f"{show_cat}出糙率限值是多少", f"{show_cat}杂质限值是多少",
+                         "DEMO-001 这批稻谷出糙率 76.5 能收吗"],
+        }
     scope = f"已收录范围里没有{cat}的这套限值" if cat else "没能定位到你要查的指标或物类"
     return {
         # 标题说「这个问法」、正文说「不是换个问法就能查到」，同一张卡自己拆台
@@ -570,10 +860,10 @@ def knowledge_answer(question: str, terms: list[str] | None = None) -> dict:
             "要补：把对应国标原文逐格核对后放进 corpus/，或问班长当前执行的是哪一版。",
         ],
         "boundary": ["已收录：GB 1350 稻谷质量要求、GB 2716/2761/2762 已核对条目、检验方法与术语",
-                     "待补：大米成品指标（GB/T 1354—2018）、GB 2762 尚未逐格核对的污染物限值",
+                     "待补：大米成品指标（GB/T 1354—2018）；GB 2762 的镉/铅/汞已从 PDF 逐格抽取，但尚未与化验室受控纸质本对照",
                      "范围外：玉米 / 大豆（油化榨油原料）、小麦 / 面粉（本厂不测）——不是「还没补」",
                      "知识库支持在左栏上传文件；新资料先进待核对区，人工确认后才可用",
-                     "真实批次与实测值不进本系统"],
+                     "系统只按 DEMO- 前缀判断假批次；实测值无法判真假，请勿上传真实数据"],
         "examples": capability_answer()["examples"],
     }
 
@@ -629,12 +919,15 @@ def route(question: str) -> dict | None:
             "title": "你好，我是 FoodQC-Agent",
             "lines": ["我负责粮油原粮（稻谷）验收的逐项判定、录入错误自查和标准条款检索。",
                       "可以直接给我一个 DEMO 假批次和指标数值，或者问「你能干什么」。"],
-            "boundary": ["只用 DEMO 假数据；真实批次与实测值不进本系统"],
+            "boundary": ["系统只按 DEMO- 前缀判断假批次；实测值无法判真假，请勿上传真实数据"],
             "examples": capability_answer()["examples"]}}
 
     has_batch = bool(re.search(r"DEMO-\d+", q, re.IGNORECASE))
     has_indicator = any(i in q for i in indicators())
-    has_number = bool(re.search(r"\d", q))
+    # 「1 等」「3 等」是等级，不是实测值。不剥掉它，「籼稻谷 1 等 整精米率是多少」
+    # 会因为句子里有个 1 被当成判定请求抢走，回一句「请切到判定模式」——
+    # 而判定模式又要批次号，人就被堵在死胡同里（夜测 2026-11-12 r01 一般①）。
+    has_number = bool(re.search(r"\d", _GRADE_RE.sub("", q)))
     wants_judge = any(w in q for w in _JUDGE_WORDS)
 
     # 查标准 ≠ 判合格。问「X 限值是多少 / 依据在哪一条」是检索，
@@ -660,7 +953,7 @@ def route(question: str) -> dict | None:
             "title": "我可以帮你判定，但还差一点信息",
             "lines": [
                 "听起来你想看某批稻谷的检验结果。给我一个 DEMO 假批次号"
-                "（DEMO-001 / 002 / 003）和具体指标数值，我就跑逐项判定 + 录入错误自查，"
+                "（目前内置只有 DEMO-001）和具体指标数值，我就跑逐项判定 + 录入错误自查，"
                 "并给出带 GB 出处的三段式结论。",
                 "如果只想问术语或标准依据，直接说指标名，例如「出糙率 3 等限值是多少」。",
                 "我不会对「能收吗」下放行结论——结论仅供复核，最终由人签字。",

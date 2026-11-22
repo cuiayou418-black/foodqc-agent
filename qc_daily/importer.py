@@ -559,8 +559,8 @@ def _check_version(rows: list, config: QCDailyConfig, notes: list, noted: set) -
                 noted.add(used)
                 notes.append(
                     f"【版本】表里「标准号」写的是 {used}，当前执行版是 {active}；"
-                    "本批结论仅供复核，不得作为放行依据。限值仍取自表内、出处可逐行追溯，"
-                    "表内限值列若沿用旧版数值，请逐项与本版结构化限值核对；版本是否适用须由化验室确认。")
+                    "表内限值不得作为放行依据；出处可逐行追溯，两个版本的限值差异由系统逐项比对，"
+                    "结论会翻转的项系统会改为「不判」；版本是否适用须由化验室确认。若本批因红线被拒、未进入逐项判定，本条仅作版本提醒，不代表发生过判定。")
             return
 
 
@@ -751,8 +751,8 @@ def convert(sheet_name: str, records: list[dict], ttype: str, config: QCDailyCon
             version_noted.add(used)
             notes.append(
                 f"【版本】表里「标准号」写的是 {used}，当前执行版是 {active}；"
-                "本批结论仅供复核，不得作为放行依据。限值仍取自表内、出处可逐行追溯，"
-                "表内限值列若沿用旧版数值，请逐项与本版结构化限值核对；版本是否适用须由化验室确认。")
+                "表内限值不得作为放行依据；出处可逐行追溯，两个版本的限值差异由系统逐项比对，"
+                "结论会翻转的项系统会改为「不判」；版本是否适用须由化验室确认。若本批因红线被拒、未进入逐项判定，本条仅作版本提醒，不代表发生过判定。")
         rows.append(row)
     _finalize_skip_notes(notes, skip_notes, skipped_lines, total_rows)
     if stats is not None:

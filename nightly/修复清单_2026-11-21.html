@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>修复清单 · 2026-11-21 白天优化轮</title>
+<style>
+  :root{
+    --bg:#f6f8fa; --card:#ffffff; --ink:#1f2328; --muted:#6b7280;
+    --line:#e4e7eb; --red:#c0392b; --red-bg:#fdf0ee; --amber:#a86400;
+    --amber-bg:#fff8e8; --green:#1f7a4d; --green-bg:#eef8f2; --blue:#1d5fa8; --blue-bg:#eef4fc;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;padding:32px 20px 64px;background:var(--bg);color:var(--ink);
+       font:14px/1.75 -apple-system,BlinkMacSystemFont,"Segoe UI","Microsoft YaHei",sans-serif}
+  .wrap{max-width:1040px;margin:0 auto}
+  h1{font-size:26px;margin:0 0 6px;letter-spacing:.4px}
+  .sub{color:var(--muted);font-size:13px;margin-bottom:24px}
+  h2{font-size:18px;margin:32px 0 12px;padding-left:11px;border-left:4px solid var(--blue)}
+  h3{font-size:15px;margin:20px 0 8px}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+        padding:18px 20px;margin-bottom:14px}
+  .lead{background:var(--blue-bg);border:1px solid #cfe0f5;border-radius:10px;padding:16px 20px}
+  .warn{background:var(--amber-bg);border:1px solid #f0dfb0}
+  .danger{background:var(--red-bg);border:1px solid #f2cfc8}
+  .ok{background:var(--green-bg);border:1px solid #c8e6d5}
+  table{width:100%;border-collapse:collapse;background:var(--card);font-size:13px}
+  th,td{border:1px solid var(--line);padding:9px 11px;text-align:left;vertical-align:top}
+  th{background:#f0f3f6;font-weight:600;white-space:nowrap}
+  code{background:#f1f3f5;padding:1px 5px;border-radius:4px;font-size:12px;
+       font-family:Consolas,"Courier New",monospace}
+  .tag{display:inline-block;padding:1px 8px;border-radius:20px;font-size:11px;
+       font-weight:600;white-space:nowrap}
+  .t-red{background:var(--red-bg);color:var(--red)}
+  .t-amber{background:var(--amber-bg);color:var(--amber)}
+  .t-green{background:var(--green-bg);color:var(--green)}
+  .t-blue{background:var(--blue-bg);color:var(--blue)}
+  .t-gray{background:#eef0f2;color:var(--muted)}
+  ul{margin:8px 0 4px;padding-left:22px}
+  li{margin:5px 0}
+  .kpi{display:flex;gap:14px;flex-wrap:wrap;margin:16px 0}
+  .kpi div{flex:1;min-width:150px;background:var(--card);border:1px solid var(--line);
+           border-radius:10px;padding:14px 16px}
+  .kpi b{font-size:24px;display:block;line-height:1.2}
+  .kpi span{font-size:12px;color:var(--muted)}
+  .mono{font-family:Consolas,"Courier New",monospace}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🛠️ 修复清单 · 2026-11-21 白天优化轮</h1>
+  <div class="sub">根据 11-21 夜测报告（5 严重 + 4 一般 + 14 轻微）的白天修复 · 小懒Q 代拍板 · 只改源码不提交 · HEAD 仍 <code>1a7d164</code></div>
+
+  <div class="lead">
+    <b>一句话战报</b>：把 11-21 夜测最扎心的 5 个严重项全部按死——<b>同一天多张纸多个合格率</b>、<b>日报被最后一次覆盖</b>、<b>漏行从报告蒸发</b>、<b>只回品类词说"库里没有稻谷"</b>、<b>被拒 run 的输入无鉴权可下载</b>——外加两条高价值一般项。判定链核心（限值数值、版本冲突、拒答路由）一行没动。
+  </div>
+
+  <div class="kpi">
+    <div><b style="color:var(--red)">5 / 5</b><span>严重项已修</span></div>
+    <div><b style="color:var(--amber)">2</b><span>一般项顺手修</span></div>
+    <div><b style="color:var(--green)">212</b><span>单测全过（原 200 + 新 12）</span></div>
+    <div><b style="color:var(--blue)">9</b><span>生产文件改动 + 1 测试文件</span></div>
+  </div>
+
+  <h2>① 严重项逐条对账</h2>
+  <table>
+    <tr><th>#</th><th>现象（复现输入）</th><th>根因 / 台账位置</th><th>改法（文件）</th><th>状态</th></tr>
+    <tr>
+      <td><span class="tag t-red">S1</span></td>
+      <td>当日日报只剩最后一次运行的数；126 项审核版被 1 项探针整份覆盖，入口与真值差 29 倍</td>
+      <td><code>agent.py</code> 按日期建目录 + 文件名只带日期（r04/r05/r06，第 9 晚）</td>
+      <td>落盘后按 run 短码另存副本（审核版+经理版全留），固定名入口仍写以兼容 <code>/reports/&lt;day&gt;</code> 路由 · <code>agent.py</code></td>
+      <td><span class="tag t-green">已修</span></td>
+    </tr>
+    <tr>
+      <td><span class="tag t-red">S2</span></td>
+      <td>同一天三次上传，11 秒内印出 85.71% / 100% / 100% 三个"当日合格率"；趋势被 1 项探针洗成满分</td>
+      <td><code>analysis.py:205</code> 注释自认"同一日期只取最后一次"（r03/r04，第 8 晚）</td>
+      <td>新增 <code>daily_rollup()</code>：同日全部 run 相加、比率重算；趋势与口径说明都读合并值，审计仍写本次 run · <code>analysis.py / models.py / templates.py</code></td>
+      <td><span class="tag t-green">已修</span></td>
+    </tr>
+    <tr>
+      <td><span class="tag t-red">S3</span></td>
+      <td>7 行表里 1 行写 <code>＜0.5</code>，那项从日报消失，报告还说"不判 0 项次、录入疑点 0 项次"</td>
+      <td><code>templates.py:224-231</code> 只统计已进判定的行（r05，第 1 晚）</td>
+      <td>从 importer 已有的总账 note 解析"共 N 行 / M 行没进判定"，在今日结论补红字明示 · <code>templates.py</code></td>
+      <td><span class="tag t-green">已修</span></td>
+    </tr>
+    <tr>
+      <td><span class="tag t-red">S4</span></td>
+      <td>发"籼稻谷"答"库里没有稻谷的限值记录"，同卡 boundary 却说"已收录 GB 1350 稻谷"</td>
+      <td><code>intent.py:800-820</code> 缺指标走成"品类没收录"（r01/r06，第 3 晚）</td>
+      <td>兜底前插"缺指标"分支：只给品类回"你只说了 X，还没说要问哪一项"+列 7 项；品种缩写从原问句兜底认，不改词表 · <code>intent.py</code></td>
+      <td><span class="tag t-green">已修</span></td>
+    </tr>
+    <tr>
+      <td><span class="tag t-red">S5</span></td>
+      <td>被红线拒掉的 run，<code>input.db</code>/上传原件/含本机路径的 <code>request.json</code> 无鉴权可直连下载</td>
+      <td><code>artifacts.py:29-37</code> 直链不查白名单，列表却排除——同模块两套规则（r05/r06，第 3 晚）</td>
+      <td>抽 <code>_is_artifact()</code> 白名单，直链与列表共用；复盘素材一律拒绝，方案仍放行 · <code>artifacts.py</code></td>
+      <td><span class="tag t-green">已修</span></td>
+    </tr>
+  </table>
+
+  <h2>② 一般 / 轻微顺手修</h2>
+  <table>
+    <tr><th>#</th><th>现象</th><th>改法</th></tr>
+    <tr><td><span class="tag t-amber">一般</span></td><td>补录 10-01 的表，红线告警仍喊"当日…请组织复盘"，让人去查今天哪批出了问题</td><td>告警模板支持 <code>{report_date}</code>，文案改"{report_date} 按检测项次算的合格率…" · <code>analysis.py / config.py / qc_daily_config.json</code></td></tr>
+    <tr><td><span class="tag t-gray">轻微</span></td><td>任务报告第 1 节永久印"正在生成报告"，而 summary.json 已是 done</td><td>渲染时状态用"已定终态 + 缺省 done"预估，不再写中间态 · <code>tasks/runner.py</code></td></tr>
+  </table>
+
+  <h2>③ 最关键的架构决策：审计 / 展示两条管道分开</h2>
+  <div class="card">
+    <b>S2 最大的坑</b>：如果把合并值写回 history，下次合并就会二次累加、越滚越大。所以定死边界——
+    <ul>
+      <li><b>审计管道</b>：<code>history.append()</code> 仍写<b>本次 run 原始值</b>，一条不改；</li>
+      <li><b>展示管道</b>：新增 <code>daily_rollup()</code> 字段，只喂趋势序列与口径说明；本次明细与合格率仍是本次值；</li>
+      <li>两处用 <code>compute_metrics</code> 一处衔接，端到端实测：本次 10 项 ≠ 合并 31 项，互不污染。</li>
+    </ul>
+    报告判定口径块还加了一句："正文「今日」= 本次上传这一批；趋势「当日」= 当天 N 次运行合并"，避免修完口径又冒出"一张纸两个当日数"的新困惑。
+  </div>
+
+  <h2>④ 验收证据（全部实跑）</h2>
+  <div class="card ok">
+    <ul>
+      <li><b>编译 + 单测</b>：<code>compileall -q qc_daily tests</code> OK；<code>unittest discover -s tests -q</code> → <b>Ran 212 OK</b>（原 200 + 新 12 条回归）。</li>
+      <li><b>S4</b>：干净重启 8000，<code>籼稻谷 / 籼稻 / 粳稻</code> 全回"你只说了 X，还没说要问哪一项"；<code>籼稻谷 1 等 出糙率</code> 仍 ≥79.0%（未退化）。</li>
+      <li><b>S5</b>：failed run 的 <code>input.db</code>/<code>request.json</code> 从 200 变 <b>400</b>，<code>summary.json</code> 仍 200，目录穿越仍 400。</li>
+      <li><b>S2</b>：<code>daily_rollup</code> 对台账 r03 样本得 25 项 / 2 不合格 / <b>92.00%</b>，与真值一致；端到端本次 10 项、趋势合并 31 项。</li>
+      <li><b>S3</b>：真实 <code>render_html</code> 输出含"另有 1 行因写法无法判定、未纳入上面 2 项次"。</li>
+      <li><b>S1</b>：连续两次运行，reports 目录里固定名入口 + 两份带短码副本共存，审核版/经理版都留档。</li>
+      <li><b>一般/轻微</b>：实跑输出"2026-11-05 按检测项次算的合格率 80.00%…"；report.html 状态 = "做完了"，"正在生成报告" 0 命中。</li>
+    </ul>
+  </div>
+
+  <h2>⑤ 留给小崔拍板（本轮没做）</h2>
+  <div class="card warn">
+    <ol>
+      <li><b>历史行仍是探针数</b>：11-14～11-20 的 history 大多是 1 项次探针。要不要一次性重算历史、或标注"口径已变、旧行不可比"？重算要碰 JSONL 账本，本轮没动。</li>
+      <li><b>total&lt;5 的天仍参与斜率</b>：台账建议"样本过小不画斜率"，本轮只做同日合并，没动斜率算法（怕引入新口径风险）。</li>
+      <li><b>near_limit 告警仍写"当日 6 个项次…"</b>：与 pass_rate_low 同族的日期错位，本轮只改了后者。要统一就把所有含"当日"的告警都带 <code>{report_date}</code>。</li>
+      <li><b>14 条 M 级轻微</b>：两表同值仍反问（连记 7 晚）、无关类别计数、boundary 拿 <code>corpus/</code> 当用户词、表内标准号回填等——按范围没碰。</li>
+      <li><b>老遗留</b>：DEMO-only 只认批号前缀、失败 run 无删除入口、<code>task_uploads/</code> 无保留期（11-15 §6）。</li>
+    </ol>
+  </div>
+
+  <div class="sub" style="margin-top:28px">决策全过程见 <code>nightly/DECISIONS_2026-11-21.md</code> · 回归测试见 <code>tests/test_nightly_20261121_fixes.py</code> · 未 git 提交，等小崔拍板后再定。</div>
+</div>
+</body>
+</html>

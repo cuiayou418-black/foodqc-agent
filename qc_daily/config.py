@@ -102,11 +102,11 @@ DEFAULT_CONFIG: dict = {
     },
     # 预警规则：metric 为指标键（见 analysis.metric_map），op 支持 < <= > >= ==
     "alert_rules": [
-        {"id": "pass_rate_low",       "level": "critical", "metric": "overall_pass_rate",        "op": "<",  "value": 0.95, "title": "总体合格率跌破 95%",        "detail": "当日总体合格率 {value:.2%}，低于红线 95%，请立即组织复盘"},
+        {"id": "pass_rate_low",       "level": "critical", "metric": "overall_pass_rate",        "op": "<",  "value": 0.95, "title": "项次合格率跌破 95%",        "detail": "{report_date} 按检测项次算的合格率 {value:.2%}，低于红线 95%，请组织复盘（这是项次口径，不是批次一次交验合格率；无生产记录时批次口径不计算）"},
         {"id": "batch_fail",           "level": "critical", "metric": "abnormal_batch_count",     "op": ">=", "value": 1,    "title": "出现不合格/异常批次",       "detail": "当日检出 {value} 个异常批次，详见日报异常批次明细"},
         {"id": "item_fail_spike",      "level": "warning",  "metric": "max_item_fail_count",      "op": ">=", "value": 3,    "title": "单项缺陷集中出现",           "detail": "有检测项目当日失败 {value} 项次，疑似系统性偏差"},
         {"id": "warehouse_violation",  "level": "warning",  "metric": "warehouse_violation_count", "op": ">=", "value": 1,   "title": "仓储环境超限",               "detail": "当日库温/湿度超限 {value} 次，存在品质劣变风险"},
-        {"id": "near_limit",           "level": "info",     "metric": "near_limit_count",         "op": ">=", "value": 3,    "title": "多项指标接近限值",           "detail": "当日 {value} 个项次限值利用率 ≥ 80%，建议关注工艺波动"},
+        {"id": "near_limit",           "level": "info",     "metric": "near_limit_count",         "op": ">=", "value": 3,    "title": "多项指标接近限值",           "detail": "{report_date} {value} 个项次限值利用率 ≥ 80%，建议关注工艺波动"},
         {"id": "production_shortfall", "level": "warning",  "metric": "production_achievement",   "op": "<",  "value": 0.90,  "title": "产量达成率不足 90%",        "detail": "当日产量达成率 {value:.2%}"},
     ],
     "push": {

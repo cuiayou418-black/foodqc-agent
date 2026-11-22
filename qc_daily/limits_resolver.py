@@ -83,6 +83,87 @@ def resolve_limit(item_spec: dict, grade: str = DEFAULT_GRADE) -> dict:
     raise ValueError(f"未识别的指标结构：{list(item_spec)}")
 
 
+def _std_key(name: str) -> str:
+    """标准号归一成 limits.json 的键形态：'GB 1350—2009' → 'GB1350-2009'。"""
+    return (re.sub(r"[\s\u00a0\u3000]", "", str(name or ""))
+            .replace("—", "-").replace("－", "-").upper())
+
+
+def _table_for(product: str) -> str:
+    """产品名 → 表号。化验室表里写的是「中晚籼稻谷」「粳糯稻谷」这类别名，
+    不是 PRODUCT_TABLES 的键，按「粳 / 籼」判一下，别因为名字对不上就查不到。"""
+    p = str(product or "").strip()
+    if p in PRODUCT_TABLES:
+        return PRODUCT_TABLES[p]
+    if "粳" in p:
+        return "表2"
+    if "籼" in p or "稻谷" in p:
+        return "表1"
+    return ""
+
+
+def limits_by_version(limits_doc: dict, item: str, product: str,
+                      grade: str = DEFAULT_GRADE) -> dict:
+    """同一指标在各版本里的取值：{'GB1350-2009': {...}, 'GB1350-2025': {...}}。
+
+    只读语料；某版没有这一项 / 这一档写「—」就不出现在结果里（不猜、不补）。
+    """
+    table_key = _table_for(product)
+    out: dict = {}
+    if not table_key:
+        return out
+    for key, std in (limits_doc or {}).items():
+        if not isinstance(std, dict) or "表格" not in std:
+            continue
+        spec = (((std.get("表格") or {}).get(table_key) or {})
+                .get("质量要求", {}).get(item))
+        if not spec:
+            continue
+        try:
+            r = resolve_limit(spec, grade=grade)
+        except (KeyError, ValueError):
+            continue
+        if r.get("numeric"):
+            out[_std_key(std.get("标准号", key))] = r
+    return out
+
+
+def version_conflict(limits_doc: dict, used_std: str, active_std: str, item: str,
+                     product: str, value, direction: str = "",
+                     grade: str = DEFAULT_GRADE) -> str:
+    """表内写的那一版与当前执行版，对同一指标的限值不一样时返回一句话，否则空串。
+
+    夜测 2026-11-12 r04 严重：表里写 `GB 1350—2025` / 谷外糙米 `≤4.0`，实测 3.0，
+    系统照表内限值判「合格」——而本版（2009）是 ≤2.0，这一项其实不合格。
+    两版数值都在 limits.json 里，这个比对本来就会做，只是此前没人做。
+
+    ⚠️ 只在**结论会变**时才算冲突：两版都合格 / 都不合格的项，不必吓人。
+    """
+    u, a = _std_key(used_std), _std_key(active_std)
+    if not u or not a or u == a:
+        return ""
+    lims = limits_by_version(limits_doc, item, product, grade=grade)
+    ru, ra = lims.get(u), lims.get(a)
+    if not ru or not ra:
+        return ""                      # 有一版取不到值：不能凭空说"两版不同"
+    if ru["expr"] == ra["expr"]:
+        return ""
+    try:
+        v = float(value)
+    except (TypeError, ValueError):
+        return ""
+    d = direction or ru.get("direction") or ra.get("direction")
+    from .models import compare
+    v_used = compare(v, ru["limit"], d)
+    v_active = compare(v, ra["limit"], d)
+    if v_used == v_active:
+        return ""                      # 两版结论一样，不构成风险
+    return (f"表内 {used_std} 给 {ru['expr']}{ru.get('unit', '')}，"
+            f"当前执行 {active_std} 给 {ra['expr']}{ra.get('unit', '')}；"
+            f"本次实测 {v:g}：按表内那版判「{'合格' if v_used else '不合格'}」，"
+            f"按本版判「{'合格' if v_active else '不合格'}」")
+
+
 def build_products(limits_doc: dict, grade: str = DEFAULT_GRADE) -> dict:
     """生成 products 段：籼稻谷←表1、粳稻谷←表2；数值全部来自语料，零手抄。"""
     std = limits_doc[STANDARD_KEY]
@@ -91,11 +172,26 @@ def build_products(limits_doc: dict, grade: str = DEFAULT_GRADE) -> dict:
     for product, table_key in PRODUCT_TABLES.items():
         table = std["表格"][table_key]
         page = _page_ref(table.get("出处", ""))
-        items, manual_checks = {}, []
+        # 「等外」不是数字等别，别拼成「第等外等」这种没人看得懂的出处
+        # （夜测 2026-11-15 白天复验发现）。
+        grade_ref = "等外" if grade == "等外" else f"第{grade}等"
+        items, manual_checks, not_required = {}, [], []
         for name, spec in table["质量要求"].items():
-            r = resolve_limit(spec, grade=grade)
+            try:
+                r = resolve_limit(spec, grade=grade)
+            except ValueError as e:
+                # 某一档某一项原表写「—」（如等外的整精米率）：只让这一项退出数值判定，
+                # 不能让整档构建失败、把同档其余六项一起说成「原表没给数值」
+                # （夜测 2026-11-15 r01 严重②）。KeyError 不在此列：整个等别不存在
+                # 时仍要抛，免得把「查无此档」伪装成「这一档全不要求」。
+                not_required.append({
+                    "item": name, "grade": grade, "standard": standard,
+                    "reason": str(e),
+                    "limit_source": f"{standard} {table_key} {grade_ref} {page}",
+                })
+                continue
             if r["kind"] == "graded_lower":
-                source = f"{standard} {table_key} 第{grade}等 {page}"
+                source = f"{standard} {table_key} {grade_ref} {page}"
             else:
                 source = f"{standard} {table_key} 质量要求·{name} {page}（各等级同值）"
             if r["numeric"]:
@@ -119,6 +215,7 @@ def build_products(limits_doc: dict, grade: str = DEFAULT_GRADE) -> dict:
                             f"已逐格核对并经人工复核，standard_version 与本条一致",
             "items": items,
             "manual_checks": manual_checks,
+            "not_required": not_required,
         }
     return out
 
